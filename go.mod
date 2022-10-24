@@ -11,6 +11,7 @@ require (
 	github.com/alecthomas/kong-hcl/v2 v2.0.0-20210826214724-5e9bf8bff126
 	github.com/alecthomas/participle/v2 v2.0.0-alpha6
 	github.com/alecthomas/repr v0.0.0-20210611225437-1a2716eca9d6
+	github.com/andy-kimball/arenaskl v0.0.0-20200617143215-f701008588b9
 	github.com/bserdar/golang-lru v0.0.0-20190506053902-559c5d14b56e
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e
@@ -21,6 +22,7 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/docker/go-connections v0.4.0 // indirect
+	github.com/emirpasic/gods v1.18.1
 	github.com/golang/protobuf v1.5.2
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.3.0
@@ -50,5 +52,5 @@ require (
 	google.golang.org/grpc v1.32.0
 	google.golang.org/protobuf v1.27.1
 	gopkg.in/DataDog/dd-trace-go.v1 v1.40.1
-	gotest.tools v2.2.0+incompatible // indirect
+	gotest.tools v2.2.0+incompatible
 )
