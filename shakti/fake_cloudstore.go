@@ -5,11 +5,12 @@ import (
 	"sync"
 )
 
-type FakeCloudStore struct {
+// Simple cloud store used for testing and local development
+type LocalCloudStore struct {
 	store sync.Map
 }
 
-func (f *FakeCloudStore) Get(key []byte) ([]byte, error) {
+func (f *LocalCloudStore) Get(key []byte) ([]byte, error) {
 	skey := common.ByteSliceToStringZeroCopy(key)
 	b, ok := f.store.Load(skey)
 	if !ok {
@@ -18,15 +19,14 @@ func (f *FakeCloudStore) Get(key []byte) ([]byte, error) {
 	return b.([]byte), nil //nolint:forcetypeassert
 }
 
-func (f *FakeCloudStore) Add(key []byte, value []byte) error {
+func (f *LocalCloudStore) Add(key []byte, value []byte) error {
 	skey := common.ByteSliceToStringZeroCopy(key)
 	f.store.Store(skey, value)
 	return nil
 }
 
-func (f *FakeCloudStore) Delete(key []byte) error {
+func (f *LocalCloudStore) Delete(key []byte) error {
 	skey := common.ByteSliceToStringZeroCopy(key)
 	f.store.Delete(skey)
 	return nil
 }
-

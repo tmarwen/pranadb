@@ -393,7 +393,7 @@ func (d *Dragon) createPebbleOpts() (*pebble.Options, error) {
 		Levels:                      make([]pebble.LevelOptions, 7),
 		MaxConcurrentCompactions:    3,
 		MaxOpenFiles:                16384,
-		MemTableSize:                64 << 20,
+		MemTableSize:                64 << 20, // 64 MB
 		MemTableStopWritesThreshold: 4,
 	}
 

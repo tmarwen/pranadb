@@ -2,7 +2,11 @@ package shakti
 
 type ChainingIterator struct {
 	iters []Iterator
-	pos int
+	pos   int
+}
+
+func NewChainingIterator(iters []Iterator) *ChainingIterator {
+	return &ChainingIterator{iters: iters}
 }
 
 func (c *ChainingIterator) Current() KV {

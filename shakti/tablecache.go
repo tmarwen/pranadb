@@ -7,7 +7,7 @@ import (
 
 // TODO should  LRU and L0 should always be pinned - we can have a two level cache for this
 type TableCache struct {
-	cache sync.Map
+	cache      sync.Map
 	cloudStore CloudStore
 }
 

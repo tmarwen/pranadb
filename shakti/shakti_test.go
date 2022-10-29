@@ -1,32 +1,31 @@
 package shakti
 
 import (
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
-func TestShakti(t *testing.T) {
-	cloudStore := &FakeCloudStore{}
-	registry := NewFakeRegistry()
-	shakti := NewShakti(cloudStore, registry)
+func TestFoo(t *testing.T) {
+	conf := Conf{
+		WriteFormat:               FormatV1,
+		MemtableMaxSizeBytes:      10 * 1024 * 1024,
+		MemtableFlushQueueMaxSize: 2,
+	}
+	cloudStore := &LocalCloudStore{}
+	registry := NewRegistry(cloudStore, conf)
+	shakti := NewShakti(cloudStore, registry, conf)
 	err := shakti.Start()
 	require.NoError(t, err)
 
-	batch := NewBatch()
+	/*
+	TODO
+	Write a bunch of entries until a bunch of SSTables appear in cloud store (and time it).
+	Then iterate through them, and verify all there.
 
-	batch.KVs["somekey"] = []byte("somevalue")
+	Do this with
+	a) Topic like data - incrementing offset
+	b) Same set of keys updating a lot
+	c) Updating set of keys, and deleting some of them
+	 */
 
-	err = shakti.Write(batch)
-	require.NoError(t, err)
-
-	iter, err := shakti.NewIterator(nil, nil)
-	require.NoError(t, err)
-
-	for iter.IsValid() {
-		kv := iter.Current()
-		log.Printf("Key:%s Value:%s", string(kv.Key), string(kv.Value))
-		err = iter.Next()
-		require.NoError(t, err)
-	}
 }

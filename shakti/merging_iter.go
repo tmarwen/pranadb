@@ -2,57 +2,76 @@ package shakti
 
 import "bytes"
 
-// TODO this can be improved / optimised
-// Also, when same key is found multiple tables we need to ignore older ones
-// When it's created we call Next()
-// We cache the current CK, or if first time this is nil
-// In Next we look at all the iters in turn and return the smallest one from left to right which is > CK, if the value
-// on the iterator is <= CK we call Next on it before looking at it's value.
-// If the value of the KV is nil then it's a tombstone and we skip it
-// We then cache this value and simply return it in Current()
-// If there is no such value then we set current to nil and is valid = false in this case
 type MergingIterator struct {
-	iters []Iterator
-	current int
+	iters   []Iterator
+	current KV
+	valid   bool
+}
+
+func NewMergingIterator(iters []Iterator) (Iterator, error) {
+	mi := &MergingIterator{
+		iters: iters,
+	}
+	if err := mi.Next(); err != nil {
+		return nil, err
+	}
+	return mi, nil
 }
 
 func (m *MergingIterator) Current() KV {
-	var currKey []byte
-	if m.current == -1 {
-		for i, iter := range m.iters {
-			valid := iter.IsValid()
-			if valid {
-				c := iter.Current()
-				if currKey == nil || bytes.Compare(c.Key, currKey) < 0 {
-					currKey = c.Key
-					m.current = i
-				}
-			}
-		}
-	}
-	if m.current == -1 {
+	if !m.valid {
 		return KV{}
 	}
-	return m.iters[m.current].Current()
+	return m.current
 }
 
 func (m *MergingIterator) Next() error {
-	if m.current == -1 {
-		m.Current()
-	}
-	if m.current != -1 {
-		return m.iters[m.current].Next()
+	repeat := true
+	for repeat {
+		// Find the smallest key
+		var smallestKey []byte
+		for _, iter := range m.iters {
+			valid := iter.IsValid()
+			if valid {
+				c := iter.Current()
+				if smallestKey == nil || bytes.Compare(c.Key, smallestKey) < 0 {
+					smallestKey = c.Key
+				}
+			}
+		}
+		if smallestKey == nil {
+			m.valid = false
+			return nil
+		}
+		first := true
+		// Take the first occurrence left to right of the smallest key as the current entry
+		// Move all occurrences of the iters wth that key to the next
+
+		for _, iter := range m.iters {
+			valid := iter.IsValid()
+			if valid {
+				c := iter.Current()
+				if bytes.Equal(c.Key, smallestKey) {
+					if first {
+						//  nil value means deleted
+						if c.Value != nil {
+							m.current = c
+							m.valid = true
+							// Not deleted - we will exit the outer loop
+							repeat = false
+						}
+						first = false
+					}
+					if err := iter.Next(); err != nil {
+						return err
+					}
+				}
+			}
+		}
 	}
 	return nil
 }
 
 func (m *MergingIterator) IsValid() bool {
-	for _, iter := range m.iters {
-		valid := iter.IsValid()
-		if valid {
-			return true
-		}
-	}
-	return false
+	return m.valid
 }
-
