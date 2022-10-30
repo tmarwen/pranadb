@@ -152,6 +152,10 @@ func (s *SSTable) Deserialize(buff []byte, offset int) int {
 	return offset
 }
 
+func (s *SSTable) CommonPrefix() []byte {
+	return s.commonPrefix
+}
+
 func appendBytesWithLengthPrefix(buff []byte, bytes []byte) []byte {
 	buff = common.AppendUint32ToBufferLE(buff, uint32(len(bytes)))
 	buff = append(buff, bytes...)

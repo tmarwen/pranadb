@@ -39,8 +39,8 @@ type Conf struct {
 	L0FilesCompactionTrigger  int // There is one L0 per processor. This is the value per processor
 	L1FilesCompactionTrigger  int // There is a single L1. This is a global value
 	LevelFilesMultiplier      int // After L1, subsequence levels compaction trigger multiplies by this for each level
-	CreateRegistry            bool
 	MaxRegistrySegmentTableEntries    int
+	LogFileName string
 }
 
 func NewShakti(cloudStore CloudStore, registry Registry, conf Conf) *Shakti {

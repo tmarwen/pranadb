@@ -1,21 +1,10 @@
 package shakti
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestFoo(t *testing.T) {
-	conf := Conf{
-		WriteFormat:               FormatV1,
-		MemtableMaxSizeBytes:      10 * 1024 * 1024,
-		MemtableFlushQueueMaxSize: 2,
-	}
-	cloudStore := &LocalCloudStore{}
-	registry := NewRegistry(cloudStore, conf)
-	shakti := NewShakti(cloudStore, registry, conf)
-	err := shakti.Start()
-	require.NoError(t, err)
 
 	/*
 	TODO

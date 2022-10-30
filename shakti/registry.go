@@ -1,26 +1,42 @@
 package shakti
 
 import (
+	"bufio"
 	"bytes"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/common"
 	"github.com/squareup/pranadb/errors"
+	"io"
+	"os"
 	"sync"
-	"time"
 )
 
 type Registry interface {
 	GetTableIDsForRange(keyStart []byte, keyEnd []byte, maxTablesPerLevel int) (OverlappingTableIDs, error)
 	ApplyChanges(registrationBatch RegistrationBatch) error
+	SetLeader() error
 	Start() error
 	Stop() error
+	Validate(validateTables bool) error
 }
 
 type NonoverlappingTableIDs []SSTableID
 type OverlappingTableIDs []NonoverlappingTableIDs
 
 type RegistryFormat byte
+
+const (
+	RegistryFormatV1 RegistryFormat = 1
+)
+
+type Replicator interface {
+	ReplicateMessage(message []byte) error
+}
+
+type Replica interface {
+	ReceiveReplicationMessage(message []byte) error
+}
 
 type registry struct {
 	lock                 sync.RWMutex
@@ -30,17 +46,23 @@ type registry struct {
 	segmentCache         sync.Map // TODO make this a LRU cache
 	masterRecord         *masterRecord
 	segmentsToAdd        map[string]*segment
-	segmentsToDelete     []segmentDeleteEntry
+	masterRecordToFlush  *masterRecord
 	segmentsToDeleteLock sync.Mutex
 	masterRecordBufferSizeEstimate int
 	segmentBufferSizeEstimate int
+	flushLock sync.Mutex
+	replicator Replicator
+	logFile *os.File
+	receivedFlush bool
+	leader bool
 }
 
-func NewRegistry(cloudStore CloudStore, conf Conf) Registry {
+func NewRegistry(conf Conf, cloudStore CloudStore, replicator Replicator) Registry {
 	return &registry{
 		format: conf.RegistryFormat,
 		cloudStore: cloudStore,
 		conf:       conf,
+		replicator: replicator,
 	}
 }
 
@@ -50,15 +72,11 @@ func (r *registry) Start() error {
 		return err
 	}
 	if buff != nil {
-		if r.conf.CreateRegistry {
-			return errors.NewPranaErrorf(errors.InvalidConfiguration,
-				"CreateRegistry specified but registry with id %s already exists", r.conf.MasterRegistryRecordID)
-		}
 		mr := &masterRecord{}
 		mr.deserialize(buff, 0)
 		r.masterRecord = mr
-	} else if r.conf.CreateRegistry {
-		r.masterRecord = &masterRecord{levelSegmentEntries: map[int][]*segmentEntry{}}
+	} else {
+		r.masterRecord = &masterRecord{levelSegmentEntries: map[int][]segmentEntry{}}
 		buff := r.masterRecord.serialize(nil)
 		if err := r.cloudStore.Add([]byte(r.conf.MasterRegistryRecordID), buff); err != nil {
 			return err
@@ -74,19 +92,29 @@ func (r *registry) updateMasterRecordBufferSizeEstimate(buffSize int) {
 	}
 }
 
+func (r *registry) updateSegmentBufferSizeEstimate(buffSize int) {
+	if buffSize > r.segmentBufferSizeEstimate {
+		r.segmentBufferSizeEstimate = int(float64(buffSize) * 1.05)
+	}
+}
+
 func (r *registry) Stop() error {
+	return nil
+}
+
+func (r *registry) SetLeader() error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	if r.leader {
+		return errors.New("already leader")
+	}
+	r.leader = true
 	return nil
 }
 
 func (r *registry) getSegment(segmentID []byte) (*segment, error) {
 	skey := common.ByteSliceToStringZeroCopy(segmentID)
 	seg, ok := r.segmentCache.Load(skey)
-	if ok {
-		return seg.(*segment), nil
-	}
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	seg, ok = r.segmentCache.Load(skey)
 	if ok {
 		return seg.(*segment), nil
 	}
@@ -113,9 +141,13 @@ func (r *registry) findTableIDsWithOverlapInSegment(seg *segment, keyStart []byt
 	return tableIDs
 }
 
+// TODO implement maxTablesPerLevel!!
 func (r *registry) GetTableIDsForRange(keyStart []byte, keyEnd []byte, maxTablesPerLevel int) (OverlappingTableIDs, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
+	if !r.leader {
+		return nil, errors.New("not leader")
+	}
 	var overlapping OverlappingTableIDs
 	for i := 0; i < len(r.masterRecord.levelSegmentEntries); i++ {
 		segmentEntries := r.masterRecord.levelSegmentEntries[i]
@@ -149,28 +181,104 @@ func (r *registry) ApplyChanges(registrationBatch RegistrationBatch) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	if err := r.replicateBatch(registrationBatch); err != nil {
+	if !r.leader {
+		return errors.New("not leader")
+	}
+
+	if err := r.replicateBatch(r.masterRecord.version, &registrationBatch); err != nil {
 		return err
 	}
 
-	// We must process the deregistrations first or we can temporarily have overlapping keys if we did the adds first
-	if err := r.applyDeregistrations(registrationBatch.Deregistrations); err != nil {
+	newSegments := make(map[string]*segment)
+
+	// We must process the deregistrations before registrations or we can temporarily have overlapping keys
+	if err := r.applyDeregistrations(registrationBatch.Deregistrations, newSegments); err != nil {
 		return err
 	}
 
-	if err := r.applyRegistrations(registrationBatch.Registrations); err != nil {
+	if err := r.applyRegistrations(registrationBatch.Registrations, newSegments); err != nil {
 		return err
 	}
 
-	return r.maybeTriggerCompaction()
-}
+	mrCopy := r.masterRecord.copy()
+	r.masterRecord.version++
 
-func (r *registry) applyDeregistrations(registrations []DeregistrationEntry) error {
-	// TODO
+	r.flushLock.Lock()
+	defer r.flushLock.Unlock()
+
+	r.masterRecordToFlush = mrCopy
+	r.segmentsToAdd = newSegments
+
 	return nil
 }
 
-func (r *registry) applyRegistrations(registrations []RegistrationEntry) error {
+func (r *registry) applyDeregistrations(deregistrations []RegistrationEntry, newSegments map[string]*segment) error {
+	for _, deregistration := range deregistrations {
+		segmentEntries, ok := r.masterRecord.levelSegmentEntries[deregistration.Level]
+		if !ok {
+			return errors.Errorf("cannot find level %d for deregistration", deregistration.Level)
+		}
+		// Find which segment entry the table is in
+		found := -1
+		for i, entry := range segmentEntries {
+			// TODO binary search
+			if bytes.Compare(deregistration.KeyStart, entry.rangeStart) >= 0 && bytes.Compare(deregistration.KeyEnd, entry.rangeEnd) <= 0 {
+				found = i
+				break
+			}
+		}
+		if found == -1 {
+			return errors.Errorf("cannot find segment for deregistration of table %v", deregistration.TableID)
+		}
+		// Find the table entry in the segment entry
+		segEntry := segmentEntries[found]
+		// Load the segment
+		seg, err := r.getSegment(segEntry.segmentID)
+		if err != nil {
+			return err
+		}
+
+		pos := -1
+		for i, te := range seg.tableEntries {
+			// TODO binary search
+			if bytes.Equal(deregistration.KeyStart, te.rangeStart) {
+				pos = i
+				break
+			}
+		}
+		if pos == -1 {
+			return errors.Error("cannot find table entry in segment")
+		}
+		newTableEntries := seg.tableEntries[:pos]
+		if pos != len(seg.tableEntries) - 1 {
+			newTableEntries = append(newTableEntries, seg.tableEntries[pos+1:]...)
+		}
+
+		// TODO if newTableEntries is small or empty then delete segment or merge it with adjacent segment
+
+		newSeg := &segment{
+			format:       seg.format,
+			tableEntries: newTableEntries,
+		}
+		id, err := r.storeNewSegment(newSeg, newSegments)
+		if err != nil {
+			return err
+		}
+		newStart := newTableEntries[0].rangeStart
+		newEnd := newTableEntries[len(newTableEntries) - 1].rangeEnd
+		newSegEntry := segmentEntry{
+			format:     segEntry.format,
+			segmentID:  id,
+			rangeStart: newStart,
+			rangeEnd:   newEnd,
+		}
+		segmentEntries[found] = newSegEntry
+		r.masterRecord.levelSegmentEntries[deregistration.Level] = segmentEntries
+	}
+	return nil
+}
+
+func (r *registry) applyRegistrations(registrations []RegistrationEntry, newSegments map[string]*segment) error {
 	for _, registration := range registrations {
 		// The new table entry that we're going to add
 		tabEntry := &tableEntry{
@@ -211,13 +319,13 @@ func (r *registry) applyRegistrations(registrations []RegistrationEntry) error {
 				segRangeEnd = registration.KeyEnd
 			}
 
-			id, err := r.storeNewSegment(seg)
+			id, err := r.storeNewSegment(seg, newSegments)
 			if err != nil {
 				return err
 			}
 
 			// Update the master record
-			r.masterRecord.levelSegmentEntries[0] = []*segmentEntry{{
+			r.masterRecord.levelSegmentEntries[0] = []segmentEntry{{
 				segmentID:  id,
 				rangeStart: segRangeStart,
 				rangeEnd:   segRangeEnd,
@@ -287,13 +395,13 @@ func (r *registry) applyRegistrations(registrations []RegistrationEntry) error {
 				}
 
 				// Store the new segment(s)
-				newEntries := make([]*segmentEntry, len(newSegs))
+				newEntries := make([]segmentEntry, len(newSegs))
 				for i, seg := range newSegs {
-					id, err := r.storeNewSegment(&seg)
+					id, err := r.storeNewSegment(&seg, newSegments)
 					if err != nil {
 						return err
 					}
-					newEntries[i] = &segmentEntry{
+					newEntries[i] = segmentEntry{
 						segmentID:  id,
 						rangeStart: seg.tableEntries[0].rangeStart,
 						rangeEnd:   seg.tableEntries[len(seg.tableEntries) - 1].rangeEnd,
@@ -301,7 +409,7 @@ func (r *registry) applyRegistrations(registrations []RegistrationEntry) error {
 				}
 
 				// Create the new segment entries
-				newSegEntries := make([]*segmentEntry, 0, len(segmentEntries) - 1 + len(newSegs))
+				newSegEntries := make([]segmentEntry, 0, len(segmentEntries) - 1 + len(newSegs))
 				newSegEntries = append(newSegEntries, segmentEntries[:found]...)
 				newSegEntries = append(newSegEntries, newEntries...)
 				if found != len(segmentEntries) - 1 {
@@ -313,130 +421,187 @@ func (r *registry) applyRegistrations(registrations []RegistrationEntry) error {
 			} else {
 				// The first segment in the level
 				seg := &segment{tableEntries: []*tableEntry{tabEntry}}
-				id, err := r.storeNewSegment(seg)
+				id, err := r.storeNewSegment(seg, newSegments)
 				if err != nil {
 					return err
 				}
-				segEntry := &segmentEntry{
+				segEntry := segmentEntry{
 					segmentID:  id,
 					rangeStart: registration.KeyStart,
 					rangeEnd:   registration.KeyEnd,
 				}
-				r.masterRecord.levelSegmentEntries[registration.Level] = []*segmentEntry{segEntry}
+				r.masterRecord.levelSegmentEntries[registration.Level] = []segmentEntry{segEntry}
 			}
 		}
 	}
 	return nil
 }
 
-func (r *registry) storeNewSegment(seg *segment) ([]byte, error) {
+func (r *registry) storeNewSegment(seg *segment, segments map[string]*segment) ([]byte, error) {
 	id, err := uuid.New().MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
+	// Add to the cache
+	r.segmentCache.Store(common.ByteSliceToStringZeroCopy(id), seg)
 	// These will be added async
-	r.segmentsToAdd[string(id)] = seg
+	segments[string(id)] = seg
 	return id, nil
 }
 
-func (r *registry) replicateBatch(batch RegistrationBatch) error {
-	// TODO
-	return nil
-}
+func (r *registry) ReceiveReplicationMessage(message []byte) error {
+	/*
+	replication message is
+	flush: 1 byte, 0 = false, true otherwise
+	version 8 bytes - (uint64 LE)
+	crc32 4 bytes (uint32 LE)
+	batch length 4 bytes (uint32 LE)
+	batch bytes
+	 */
 
-type segmentDeleteEntry struct {
-	deleteTime time.Time
-	segmentID  segmentID
-}
+	r.lock.Lock()
+	defer r.lock.Unlock()
 
-func (r *registry) queueSegmentToDelete(segmentID segmentID) {
-	r.segmentsToDeleteLock.Lock()
-	defer r.segmentsToDeleteLock.Unlock()
-	deleteTime := time.Now().Add(r.conf.SegmentDeleteDelay)
-	r.segmentsToDelete = append(r.segmentsToDelete, segmentDeleteEntry{
-		deleteTime: deleteTime,
-		segmentID:  segmentID,
-	})
-}
-
-// Call this on a timer
-func (r *registry) checkSegmentsToDelete() error {
-	var toDeleteNow []segmentID
-	r.segmentsToDeleteLock.Lock()
-	now := time.Now()
-	i := 0
-	var entry segmentDeleteEntry
-	for i, entry = range r.segmentsToDelete {
-		if !entry.deleteTime.After(now) {
-			toDeleteNow = append(toDeleteNow, entry.segmentID)
-		} else {
-			break
-		}
+	flush := true
+	if message[0] == 0 {
+		flush = false
 	}
-	r.segmentsToDeleteLock.Unlock()
-
-	// Note: we delete outside the lock so we don't block changes to the registry
-	// TODO delete in parallel
-	for _, segmentID := range toDeleteNow {
-		if err := r.cloudStore.Delete(segmentID); err != nil {
+	if flush {
+		// The master record corresponding to all the batches in the log has been stored permanently so we can
+		// close the log file and re-open it, truncating it to the beginning.
+		// TODO benchmark the close and open to see how long it takes
+		if err := r.logFile.Close(); err != nil {
 			return err
 		}
+		if err := r.openOrCreateLogFile(r.conf.LogFileName); err != nil {
+			return err
+		}
+		r.receivedFlush = true
+		return nil
 	}
-
-	r.segmentsToDeleteLock.Lock()
-	r.segmentsToDelete = r.segmentsToDelete[i:]
-	r.segmentsToDeleteLock.Unlock()
-
+	if !r.receivedFlush {
+		// We ignore any replicated batches until we have received the first flush
+		return nil
+	}
+	// We append the rest of the message direct to the log, avoiding deserialization/serialization cost
+	_, err := r.logFile.Write(message[1:])
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-/*
-Flush the changes to cloud storage, we keep track of the segments to add and remove since the last flush
-*/
+func (r *registry) openOrCreateLogFile(filename string) error {
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	r.logFile = f
+	return nil
+}
+
+func (r *registry) replicateBatch(version uint64, batch *RegistrationBatch) error {
+	buff := make([]byte, 0) // TODO better buff size estimate
+	buff = append(buff, 0) // flush = false
+	buff = common.AppendUint64ToBufferLE(buff, version)
+	buff = common.AppendUint32ToBufferLE(buff, 0) // CRC32 TODO
+	buff = batch.serialize(buff)
+	return r.replicator.ReplicateMessage(buff)
+}
+
+func (r *registry) recover() (bool, error) {
+	// Assumes latest master record has been loaded before this is called
+	f, err := os.OpenFile(r.conf.LogFileName, os.O_RDONLY, 0600)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	latestVersion := r.masterRecord.version
+	br := bufio.NewReader(f)
+	var recoveredBatches []RegistrationBatch
+	for {
+
+		buff := make([]byte, 4)
+		_, err = io.ReadFull(br, buff)
+		if err != nil {
+			// TODO
+		}
+		// TODO TODO TODO
+		// read version from record
+		var ver uint64 = 234
+		if ver != latestVersion {
+			break
+		}
+		// Read batch and add to recoveredBatches
+	}
+
+	// TODO
+	// The new leader might not have local log entries for the current version, e.g. if it joined the cluster recently
+	// and hadn't received the previous flush, so we ask other members of the group to see if they have the data
+	// If other nodes respond with batches at the same as latest master record version that mean that data needs to be
+	// applied and a new master record flushed (note the version on the replication batch is the version of the *next* unflushed
+	// master record!)
+
+	log.Printf("%v", recoveredBatches)
+
+	// TODO
+	// Apply recovered batches and flush segments and masterrecord
+	// Then leader can start
+	return true, nil
+
+}
+
 func (r *registry) flushChanges() error {
 
 	/*
-	Instead of this we should add segment to Flush to a channel
-	and then have a goroutine consuming from that and writing them in parallel
+	When we apply a batch we first replicate the batch, then we process the batch on the leader, updating the in-memory
+	state. The data is then available to be read, as the batch has been replicated to multiple replicas.
 
-	We should also ensure changes to the master Record aren't available to read until they've all been replicated.
+	If a failure occurs the batches will be processed on the new leader before it becomes live and the registry will
+	end up in the same state. It doesn't matter if UUIDs of segments are different as these are not exposed to the user
+	of the registry.
 
-	1. Replicate the actual change batch to R nodes
-	2. When received on replica store it in a slice of change batches and log them to log file
-	3. When has been replicated to R nodes, then apply the change to the local state
+	During processing of the batch, there will be a set of new segments add and a new version of the master record at
+	a particular version. We will add these segments to a map of segments to push and we will take a copy of the master record
+	and store that in a member variable.
 
-	On recovery load the master record and apply the changes from the slice
+	Periodically, we will take a copy of the segment to push map and the stored master record copy and reset them.
+	We will then push the segments, and push the master record. Then a flush can be replicated to replicas which can clear their batch log up to
+	that version of the master record.
 
-	 */
+	If too many segments to push build up, then we will lock updates and force a flush to prevent the backlog growing too fast
+	*/
 
-	//// Make a copy of the master record and the segments we're going to flush
-	//// We don't want to block changes to the registry while we're flushing
-	//var mrCopy masterRecord
-	//var segmentsToAdd map[string]segment
-	//r.lock.Lock()
-	//mrCopy = *r.masterRecord
-	//segmentsToAdd = r.segmentsToAdd
-	//r.segmentsToAdd = make(map[string]segment)
-	//r.lock.Unlock()
-	//
-	//// First we push the new segments
-	//for sSegmentID, segment := range segmentsToAdd {
-	//	segmentID := common.StringToByteSliceZeroCopy(sSegmentID)
-	//	bytes, err := segment.serialize()
-	//	if err != nil {
-	//		return err
-	//	}
-	//	// TODO add them in parallel
-	//	if err := r.cloudStore.Add(segmentID, bytes); err != nil {
-	//		return err
-	//	}
-	//}
-	//// Once they've all been added we can flush the master record
-	//bytes, err := mrCopy.serialize()
-	//if err != nil {
-	//	return err
-	//}
-	//return r.cloudStore.Add(r.conf.MasterRegistryRecordID, bytes)
+	r.flushLock.Lock()
+	mr := r.masterRecordToFlush
+	segs := r.segmentsToAdd
+	r.masterRecordToFlush = nil
+	r.segmentsToAdd = nil
+	r.flushLock.Unlock()
+
+	if mr != nil {
+		// First we push the new segments
+		// Note we don't delete any segments here, that is done async some time later - this avoids the case where
+		// GetTableIDsForRange is called to create an iterator but immediately some of the tables disappear because
+		// of compaction (most likely of L0 which is very frequent)
+		for sSegmentID, seg := range segs {
+			segID := common.StringToByteSliceZeroCopy(sSegmentID)
+			buff := make([]byte, r.segmentBufferSizeEstimate)
+			buff = seg.serialize(buff)
+			r.updateSegmentBufferSizeEstimate(len(buff))
+			// TODO add them in parallel
+			if err := r.cloudStore.Add(segID, buff); err != nil {
+				return err
+			}
+		}
+		// Once they've all been added we can flush the master record
+		buff := make([]byte, r.masterRecordBufferSizeEstimate)
+		buff = mr.serialize(buff)
+		r.updateMasterRecordBufferSizeEstimate(len(buff))
+		return r.cloudStore.Add([]byte(r.conf.MasterRegistryRecordID), buff)
+	}
 	return nil
 }
 
@@ -464,14 +629,64 @@ type RegistrationEntry struct {
 	KeyStart, KeyEnd []byte
 }
 
-type DeregistrationEntry struct {
-	Level   int
-	TableID SSTableID
+func (re *RegistrationEntry) serialize(buff []byte) []byte {
+	buff = common.AppendUint32ToBufferLE(buff, uint32(re.Level))
+	buff = common.AppendUint32ToBufferLE(buff, uint32(len(re.TableID)))
+	buff = append(buff, re.TableID...)
+	buff = common.AppendUint32ToBufferLE(buff, uint32(len(re.KeyStart)))
+	buff = append(buff, re.KeyStart...)
+	buff = common.AppendUint32ToBufferLE(buff, uint32(len(re.KeyEnd)))
+	buff = append(buff, re.KeyEnd...)
+	return buff
+}
+
+func (re *RegistrationEntry) deserialize(buff []byte, offset int) int {
+	var lev uint32
+	lev, offset = common.ReadUint32FromBufferLE(buff, offset)
+	re.Level = int(lev)
+	var l uint32
+	l, offset = common.ReadUint32FromBufferLE(buff, offset)
+	re.TableID = buff[offset: offset + int(l)]
+	offset += int(l)
+	l, offset = common.ReadUint32FromBufferLE(buff, offset)
+	re.KeyStart = buff[offset: offset + int(l)]
+	offset += int(l)
+	l, offset = common.ReadUint32FromBufferLE(buff, offset)
+	re.KeyEnd = buff[offset: offset + int(l)]
+	offset += int(l)
+	return offset
 }
 
 type RegistrationBatch struct {
 	Registrations   []RegistrationEntry
-	Deregistrations []DeregistrationEntry
+	Deregistrations []RegistrationEntry
+}
+
+func (rb *RegistrationBatch) serialize(buff []byte) []byte {
+	buff = common.AppendUint32ToBufferLE(buff, uint32(len(rb.Registrations)))
+	for _, reg := range rb.Registrations {
+		buff = reg.serialize(buff)
+	}
+	buff = common.AppendUint32ToBufferLE(buff, uint32(len(rb.Deregistrations)))
+	for _, dereg := range rb.Deregistrations {
+		buff = dereg.serialize(buff)
+	}
+	return buff
+}
+
+func (rb *RegistrationBatch) deserialize(buff []byte, offset int) int {
+	var l uint32
+	l, offset = common.ReadUint32FromBufferLE(buff, offset)
+	rb.Registrations = make([]RegistrationEntry, l)
+	for i := 0; i < int(l); i++ {
+		offset = rb.Registrations[i].deserialize(buff, offset)
+	}
+	l, offset = common.ReadUint32FromBufferLE(buff, offset)
+	rb.Deregistrations = make([]RegistrationEntry, l)
+	for i := 0; i < int(l); i++ {
+		offset = rb.Deregistrations[i].deserialize(buff, offset)
+	}
+	return offset
 }
 
 type segmentID []byte
@@ -567,11 +782,26 @@ func (se *segmentEntry) deserialize(buff []byte, offset int) int {
 
 type masterRecord struct {
 	format byte
-	levelSegmentEntries map[int][]*segmentEntry
+	version uint64
+	levelSegmentEntries map[int][]segmentEntry
+}
+
+func (mr *masterRecord) copy() *masterRecord {
+	mapCopy := make(map[int][]segmentEntry, len(mr.levelSegmentEntries))
+	for k, v := range mr.levelSegmentEntries {
+		// TODO make sure v is really copied
+		mapCopy[k] = v
+	}
+	return &masterRecord{
+		format:              mr.format,
+		version:             mr.version,
+		levelSegmentEntries: mapCopy,
+	}
 }
 
 func (mr *masterRecord) serialize(buff []byte) []byte {
 	buff = append(buff, mr.format)
+	buff = common.AppendUint64ToBufferLE(buff, mr.version)
 	buff = common.AppendUint32ToBufferLE(buff, uint32(len(mr.levelSegmentEntries)))
 	for level, segmentEntries := range mr.levelSegmentEntries {
 		buff = common.AppendUint32ToBufferLE(buff, uint32(level))
@@ -586,16 +816,17 @@ func (mr *masterRecord) serialize(buff []byte) []byte {
 func (mr *masterRecord) deserialize(buff []byte, offset int) int {
 	mr.format = buff[offset]
 	offset++
+	mr.version, offset = common.ReadUint64FromBufferLE(buff, offset)
 	var nl uint32
 	nl, offset = common.ReadUint32FromBufferLE(buff, offset)
-	mr.levelSegmentEntries = make(map[int][]*segmentEntry, nl)
+	mr.levelSegmentEntries = make(map[int][]segmentEntry, nl)
 	for i := 0; i < int(nl); i++ {
 		var level, numEntries uint32
 		level, offset = common.ReadUint32FromBufferLE(buff, offset)
 		numEntries, offset = common.ReadUint32FromBufferLE(buff, offset)
-		segEntries := make([]*segmentEntry, numEntries)
+		segEntries := make([]segmentEntry, numEntries)
 		for j := 0; j < int(numEntries); j++ {
-			segEntry := &segmentEntry{}
+			segEntry := segmentEntry{}
 			offset = segEntry.deserialize(buff, offset)
 			segEntries[j] = segEntry
 		}
@@ -609,4 +840,125 @@ func hasOverlap(keyStart []byte, keyEnd []byte, blockKeyStart []byte, blockKeyEn
 	// registry keyStart and keyEnd are inclusive!
 	dontOverlap := bytes.Compare(keyStart, blockKeyEnd) > 0 || bytes.Compare(keyEnd, blockKeyStart) <= 0
 	return !dontOverlap
+}
+
+// Validate checks the registry is sound - no overlapping keys in L > 0 etc
+func (r *registry) Validate(validateTables bool) error {
+	lse := r.masterRecord.levelSegmentEntries
+	for level, segentries := range lse {
+		if level == 0 {
+			for i, segEntry := range segentries {
+				if err := r.validateSegment(segEntry, level, i, validateTables); err != nil {
+					return err
+				}
+			}
+		} else {
+			for i, segEntry := range segentries {
+				if i > 0 {
+					if bytes.Compare(segentries[i - 1].rangeEnd, segEntry.rangeStart) >= 0 {
+						return errors.Errorf("inconsistency. level %d segment entry %d overlapping range with previous", level, i)
+					}
+				}
+				if i < len(segentries) -1 {
+					if bytes.Compare(segentries[i + 1].rangeStart, segEntry.rangeEnd) <= 0 {
+						return errors.Errorf("inconsistency. level %d segment entry %d overlapping range with next", level, i)
+					}
+				}
+				if err := r.validateSegment(segEntry, level, i, validateTables); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// There should be no empty levels after the first non empty level
+	firstNonEmptyLevel := 0
+	for {
+		_, ok := lse[firstNonEmptyLevel]
+		if ok {
+			break
+		}
+		firstNonEmptyLevel++
+	}
+	numLevels := len(lse)
+	for i := firstNonEmptyLevel; i < firstNonEmptyLevel + numLevels; i++ {
+		_, ok := lse[i]
+		if !ok {
+			return errors.Errorf("empty level %d", i)
+		}
+	}
+	return nil
+}
+
+func (r *registry) validateSegment(segEntry segmentEntry, level int, segEntryIndex int, validateTables bool) error {
+	seg, err := r.getSegment(segEntry.segmentID)
+	if err != nil {
+		return err
+	}
+	if len(seg.tableEntries) == 0 {
+		return errors.Errorf("inconsistency. level %d. segment %v has zero table entries", level, segEntry.segmentID)
+	}
+	if !bytes.Equal(segEntry.rangeStart, seg.tableEntries[0].rangeStart) {
+		return errors.Errorf("inconsistency. level %d. segment entry %d rangeStart does not match rangeStart of first table entry", level, segEntryIndex)
+	}
+	if !bytes.Equal(segEntry.rangeEnd, seg.tableEntries[len(seg.tableEntries) - 1].rangeEnd) {
+		return errors.Errorf("inconsistency. level %d. segment entry %d rangeEnd does not match rangeEnd of first table entry", level, segEntryIndex)
+	}
+	for i, te := range seg.tableEntries {
+		if i > 0 {
+			if bytes.Compare(seg.tableEntries[i - 1].rangeEnd, te.rangeStart) >= 0 {
+				return errors.Errorf("inconsistency. segment %v, table entry %d has overlap with previous", segEntry.segmentID, i)
+			}
+		}
+		if i < len(seg.tableEntries) -1 {
+			if bytes.Compare(seg.tableEntries[i + 1].rangeStart, te.rangeEnd) <= 0 {
+				return errors.Errorf("inconsistency. segment %v, table entry %d has overlap with next", segEntry.segmentID, i)
+			}
+		}
+		if validateTables {
+			if err := r.validateTable(te); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *registry) validateTable(te *tableEntry) error {
+	buff, err := r.cloudStore.Get(te.ssTableID)
+	if err != nil {
+		return err
+	}
+	if buff == nil {
+		return errors.Errorf("cannot find sstable %v", te.ssTableID)
+	}
+	table := &SSTable{}
+	table.Deserialize(buff, 0)
+	iter, err := table.NewIterator(table.CommonPrefix(), nil)
+	if err != nil {
+		return err
+	}
+	first := true
+	var prevKey []byte
+	for iter.IsValid() {
+		curr := iter.Current()
+		if first {
+			if !bytes.Equal(te.rangeStart, curr.Key) {
+				return errors.Errorf("table %v range start does not match first entry key", te.ssTableID)
+			}
+			first = false
+		}
+		if prevKey != nil {
+			if bytes.Compare(prevKey, curr.Key) >= 0 {
+				return errors.Errorf("table %v keys out of order", te.ssTableID)
+			}
+		}
+		prevKey = curr.Key
+	}
+	if prevKey == nil {
+		return errors.Errorf("table %v has no entries", te.ssTableID)
+	}
+	if !bytes.Equal(te.rangeEnd, prevKey) {
+		return errors.Errorf("table %v range end does not match last entry key", te.ssTableID)
+	}
+	return nil
 }
