@@ -4,53 +4,38 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/common"
+	"github.com/squareup/pranadb/shakti/cloudstore"
+	common2 "github.com/squareup/pranadb/shakti/cmn"
+	iters2 "github.com/squareup/pranadb/shakti/iteration"
+	"github.com/squareup/pranadb/shakti/mem"
+	"github.com/squareup/pranadb/shakti/nexus"
+	"github.com/squareup/pranadb/shakti/sst"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type Shakti struct {
-	conf         Conf
-	memtable     *Memtable
-	cloudStore   CloudStore
-	registry     Registry
-	TableCache   *TableCache
+	conf         common2.Conf
+	memtable     *mem.Memtable
+	cloudStore   cloudstore.Store
+	registry     nexus.Controller
+	TableCache   *sst.Cache
 	mtLock       sync.RWMutex
 	mtFlushChan  chan struct{}
-	mtFlushQueue []*Memtable
+	mtFlushQueue []mtFlushEntry
 	// We use a separate lock to protect the flush queue as we don't want removing first element from queue to block
 	// writes to the memtable
 	mtFlushQueueLock common.SpinLock
 }
 
-type Iterator interface {
-	Current() KV
-	Next() error
-	IsValid() bool
-}
-
-type Conf struct {
-	RegistryFormat RegistryFormat
-	WriteFormat               Format
-	MemtableMaxSizeBytes      int
-	MemtableFlushQueueMaxSize int
-	SegmentDeleteDelay        time.Duration
-	MasterRegistryRecordID    string
-	L0FilesCompactionTrigger  int // There is one L0 per processor. This is the value per processor
-	L1FilesCompactionTrigger  int // There is a single L1. This is a global value
-	LevelFilesMultiplier      int // After L1, subsequence levels compaction trigger multiplies by this for each level
-	MaxRegistrySegmentTableEntries    int
-	LogFileName string
-}
-
-func NewShakti(cloudStore CloudStore, registry Registry, conf Conf) *Shakti {
-	memtable := NewMemtable(conf.MemtableMaxSizeBytes)
+func NewShakti(store cloudstore.Store, registry nexus.Controller, conf common2.Conf) *Shakti {
+	memtable := mem.NewMemtable(conf.MemtableMaxSizeBytes)
 	return &Shakti{
 		conf:        conf,
 		memtable:    memtable,
-		cloudStore:  cloudStore,
+		cloudStore:  store,
 		registry:    registry,
-		TableCache:  &TableCache{cloudStore: cloudStore},
+		TableCache:  sst.NewTableCache(store),
 		mtFlushChan: make(chan struct{}, conf.MemtableFlushQueueMaxSize),
 	}
 }
@@ -65,9 +50,9 @@ func (s *Shakti) Stop() error {
 	return nil
 }
 
-func (s *Shakti) Write(batch *Batch) error {
+func (s *Shakti) Write(batch *mem.Batch) error {
 	for {
-		mt, ok, err := s.doWrite(batch)
+		memtable, ok, err := s.doWrite(batch)
 		if err != nil {
 			return err
 		}
@@ -77,13 +62,15 @@ func (s *Shakti) Write(batch *Batch) error {
 
 		// No more space left in memtable - swap writeIter out and replace writeIter with a new one and flush writeIter async
 		s.mtLock.Lock()
-		if mt == s.memtable {
+		if memtable == s.memtable {
 
 			// It hasn't already been swapped so swap writeIter
-			s.memtable = NewMemtable(s.conf.MemtableMaxSizeBytes)
+			s.memtable = mem.NewMemtable(s.conf.MemtableMaxSizeBytes)
 
 			s.mtFlushQueueLock.Lock()
-			s.mtFlushQueue = append(s.mtFlushQueue, mt)
+			s.mtFlushQueue = append(s.mtFlushQueue, mtFlushEntry{
+				memtable: memtable,
+			})
 			s.mtFlushQueueLock.Unlock()
 			s.mtFlushChan <- struct{}{}
 
@@ -93,11 +80,11 @@ func (s *Shakti) Write(batch *Batch) error {
 	}
 }
 
-func (s *Shakti) ReceiveReplicatedBatch(batch *Batch) error {
+func (s *Shakti) ReceiveReplicatedBatch(batch *mem.Batch) error {
 	return nil
 }
 
-func (s *Shakti) doWrite(batch *Batch) (*Memtable, bool, error) {
+func (s *Shakti) doWrite(batch *mem.Batch) (*mem.Memtable, bool, error) {
 	s.mtLock.RLock()
 	defer s.mtLock.RUnlock()
 	mt := s.memtable
@@ -105,13 +92,13 @@ func (s *Shakti) doWrite(batch *Batch) (*Memtable, bool, error) {
 	return mt, ok, err
 }
 
-func (s *Shakti) getMemtable() *Memtable {
+func (s *Shakti) getMemtable() *mem.Memtable {
 	s.mtLock.RLock()
 	defer s.mtLock.RUnlock()
 	return s.memtable
 }
 
-func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (Iterator, error) {
+func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (iters2.Iterator, error) {
 
 	ids, err := s.registry.GetTableIDsForRange(keyStart, keyEnd, 10000) // TODO don't hardcode
 	if err != nil {
@@ -123,7 +110,7 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (Iterator, error) {
 	s.mtLock.RLock()
 	// We creating a merging iterator which merges from a set of potentially overlapping Memtables/SSTables in order
 	// from newest to oldest
-	iters := make([]Iterator, len(ids)+1+len(s.mtFlushQueue))
+	iters := make([]iters2.Iterator, len(ids)+1+len(s.mtFlushQueue))
 	pos := 0
 	// First we add the current memtable
 	iters[pos] = s.memtable.NewIterator(keyStart, keyEnd)
@@ -131,8 +118,8 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (Iterator, error) {
 	s.mtFlushQueueLock.Lock()
 	// Then we add each memtable in the flush queue
 	for i := len(s.mtFlushQueue) - 1; i >= 0; i-- {
-		mt := s.mtFlushQueue[i]
-		iters[pos] = mt.NewIterator(keyStart, keyEnd)
+		fe := s.mtFlushQueue[i]
+		iters[pos] = fe.memtable.NewIterator(keyStart, keyEnd)
 		pos++
 	}
 	s.mtFlushQueueLock.Unlock()
@@ -144,7 +131,7 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (Iterator, error) {
 	// this and not add writeIter if this is the case
 	for i, nonOverLapIDs := range ids {
 		if len(nonOverLapIDs) == 1 {
-			lazy, err := NewLazySSTableIterator(nonOverLapIDs[0], s.TableCache, keyStart, keyEnd)
+			lazy, err := sst.NewLazySSTableIterator(nonOverLapIDs[0], s.TableCache, keyStart, keyEnd)
 			if err != nil {
 				return nil, err
 			}
@@ -154,20 +141,20 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (Iterator, error) {
 			// LazySSTableIterators (e.g. in the case the range is large and there is a huge amount of data in storage)
 			// We should get at most X table Ids per level, and the chain iterator knows how to extend itself by asking
 			// for more ids using GetTableIDsForRange
-			chainIters := make([]Iterator, len(nonOverLapIDs))
+			chainIters := make([]iters2.Iterator, len(nonOverLapIDs))
 			for i, nonOverlapID := range nonOverLapIDs {
-				lazy, err := NewLazySSTableIterator(nonOverlapID, s.TableCache, keyStart, keyEnd)
+				lazy, err := sst.NewLazySSTableIterator(nonOverlapID, s.TableCache, keyStart, keyEnd)
 				if err != nil {
 					return nil, err
 				}
 				chainIters[i] = lazy
 			}
-			iters[i+pos] = &ChainingIterator{iters: chainIters}
+			iters[i+pos] = iters2.NewChainingIterator(iters)
 		}
 		pos++
 	}
 
-	return &MergingIterator{iters: iters}, nil
+	return iters2.NewMergingIterator(iters, false)
 }
 
 type bufSizeEstimates struct {
@@ -196,8 +183,32 @@ func (b *bufSizeEstimates) getMtEntriesEstimate() int {
 	return int(atomic.LoadUint32(&b.mtEntriesEstimate))
 }
 
+type ssTableInfo struct {
+	ssTableID   sst.SSTableID
+	largestKey  []byte
+	smallestKey []byte
+}
+
+type mtFlushEntry struct {
+	memtable  *mem.Memtable
+	ssTabInfo atomic.Value
+}
+
+// Called after the ssTable for the memtable has been stored to cloud storage
+func (fe *mtFlushEntry) setSSTableInfo(ssTableInfo *ssTableInfo) {
+	fe.ssTabInfo.Store(ssTableInfo)
+}
+
+func (fe *mtFlushEntry) getSSTableInfo() *ssTableInfo {
+	s := fe.ssTabInfo.Load()
+	if s == nil {
+		return nil
+	}
+	return s.(*ssTableInfo)
+}
+
 func (s *Shakti) mtFlushRunLoop() {
-	var bufSizeEstimates bufSizeEstimates
+	var bufEstimates bufSizeEstimates
 	pos := 0
 	for range s.mtFlushChan {
 		s.mtFlushQueueLock.Lock()
@@ -206,41 +217,39 @@ func (s *Shakti) mtFlushRunLoop() {
 		// Here we remove any contiguous range of flushed memtables and remove the flushed prefix of the flush queue
 		// We make sure we register sstables in the same order they were added to the flush queue
 		for i = 0; i < pos; i++ {
-			ssTableInfo := s.mtFlushQueue[i].getSSTableInfo()
-			if ssTableInfo == nil {
+			tabInfo := s.mtFlushQueue[i].getSSTableInfo()
+			if tabInfo == nil {
 				// Not stored in cloud storage yet
 				break
-			} else {
-				if err := s.registry.ApplyChanges(RegistrationBatch{
-					Registrations: []RegistrationEntry{{
-						Level:    0,
-						TableID:  ssTableInfo.ssTableID,
-						KeyStart: ssTableInfo.smallestKey,
-						KeyEnd:   ssTableInfo.largestKey,
-					}},
-					Deregistrations: nil,
-				}); err != nil {
-					log.Errorf("failed to register sstable %+v", err)
-					return
-				}
+			} else if err := s.registry.ApplyChanges(nexus.RegistrationBatch{
+				Registrations: []nexus.RegistrationEntry{{
+					Level:    0,
+					TableID:  tabInfo.ssTableID,
+					KeyStart: tabInfo.smallestKey,
+					KeyEnd:   tabInfo.largestKey,
+				}},
+				Deregistrations: nil,
+			}); err != nil {
+				log.Errorf("failed to register sstable %+v", err)
+				return
 			}
 		}
 		s.mtFlushQueue = s.mtFlushQueue[i:]
 		pos -= i
 		// Take next one to flush
-		mt := s.mtFlushQueue[pos]
+		flushEntry := s.mtFlushQueue[pos]
 		s.mtFlushQueueLock.Unlock()
 		pos++
-		buffSizeEstimate := bufSizeEstimates.getMtBuffSizeEstimate()
-		entriesEstimate := bufSizeEstimates.getMtEntriesEstimate()
+		buffSizeEstimate := bufEstimates.getMtBuffSizeEstimate()
+		entriesEstimate := bufEstimates.getMtEntriesEstimate()
 		// We flush in parallel as cloud storage can have a high latency
 		go func() {
-			buffSize, entries, err := s.flushMemtable(mt, buffSizeEstimate, entriesEstimate)
+			buffSize, entries, err := s.flushMemtable(flushEntry, buffSizeEstimate, entriesEstimate)
 			if err != nil {
 				log.Errorf("failed to flush memtable %+v", err)
 				return
 			}
-			bufSizeEstimates.updateSizeEstimates(buffSize, entries)
+			bufEstimates.updateSizeEstimates(buffSize, entries)
 		}()
 	}
 }
@@ -248,9 +257,10 @@ func (s *Shakti) mtFlushRunLoop() {
 // Flush the memtable to a sstable, and push writeIter to cloud storage, this method does not register the sstable with
 // the registry. Registration must be done in the same order in which memtables were created. Flushing can occur
 // in parallel for multiple memtables.
-func (s *Shakti) flushMemtable(mt *Memtable, buffSizeEstimate int, entriesEstimate int) (int, int, error) {
+func (s *Shakti) flushMemtable(flushEntry mtFlushEntry, buffSizeEstimate int, entriesEstimate int) (int, int, error) {
+	mt := flushEntry.memtable
 	iter := mt.NewIterator(nil, nil)
-	ssTable, smallestKey, largestKey, err := BuildSSTable(s.conf.WriteFormat, buffSizeEstimate, entriesEstimate,
+	ssTable, smallestKey, largestKey, err := sst.BuildSSTable(s.conf.TableFormat, buffSizeEstimate, entriesEstimate,
 		mt.CommonPrefix(), iter)
 	if err != nil {
 		return 0, 0, err
@@ -266,10 +276,10 @@ func (s *Shakti) flushMemtable(mt *Memtable, buffSizeEstimate int, entriesEstima
 	if err := s.cloudStore.Add(id, tableBytes); err != nil {
 		return 0, 0, err
 	}
-	mt.setSSTableInfo(&SSTableInfo{
+	flushEntry.setSSTableInfo(&ssTableInfo{
 		ssTableID:   id,
 		largestKey:  largestKey,
 		smallestKey: smallestKey,
 	})
-	return len(tableBytes), ssTable.numEntries, nil
+	return len(tableBytes), ssTable.NumEntries(), nil
 }

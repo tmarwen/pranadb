@@ -1,7 +1,8 @@
-package shakti
+package sst
 
 import (
 	"fmt"
+	"github.com/squareup/pranadb/shakti/cmn"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -18,7 +19,7 @@ func BenchmarkBuildSSTable(b *testing.B) {
 
 	// Build once outside the timer to get the size
 	iter := prepareInput(commonPrefix, valuePrefix, numEntries)
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, numEntries, commonPrefix, iter)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, numEntries, commonPrefix, iter)
 	require.NoError(b, err)
 	bufferSize := len(sstable.Serialize())
 
@@ -27,7 +28,7 @@ func BenchmarkBuildSSTable(b *testing.B) {
 		b.StopTimer()
 		iter := prepareInput(commonPrefix, valuePrefix, numEntries)
 		b.StartTimer()
-		_, _, _, err := BuildSSTable(FormatV1, numEntries, bufferSize, commonPrefix, iter)
+		_, _, _, err := BuildSSTable(cmn.DataFormatV1, numEntries, bufferSize, commonPrefix, iter)
 		require.NoError(b, err)
 	}
 }
@@ -44,10 +45,10 @@ func BenchmarkSerializeSSTable(b *testing.B) {
 
 	// Build once outside the timer to get the size
 	iter := prepareInput(commonPrefix, valuePrefix, numEntries)
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, numEntries, commonPrefix, iter)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, numEntries, commonPrefix, iter)
 	require.NoError(b, err)
 	bufferSize := len(sstable.Serialize())
-	sstable, _, _, err = BuildSSTable(FormatV1, bufferSize, numEntries, commonPrefix, iter)
+	sstable, _, _, err = BuildSSTable(cmn.DataFormatV1, bufferSize, numEntries, commonPrefix, iter)
 	require.NoError(b, err)
 
 	b.ResetTimer()
@@ -67,7 +68,7 @@ func BenchmarkSeekSSTable(b *testing.B) {
 		valuePrefix = append(valuePrefix, byte(i))
 	}
 	iter := prepareInput(commonPrefix, valuePrefix, numEntries)
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, iter)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, iter)
 	require.NoError(b, err)
 	keysToSeek := make([][]byte, numEntries)
 	for i := 0; i < numEntries; i++ {
@@ -95,7 +96,7 @@ func BenchmarkIterateAllSSTable(b *testing.B) {
 		valuePrefix = append(valuePrefix, byte(i))
 	}
 	iter := prepareInput(commonPrefix, valuePrefix, numEntries)
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, iter)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, iter)
 	require.NoError(b, err)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

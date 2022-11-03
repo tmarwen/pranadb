@@ -1,4 +1,8 @@
-package shakti
+package iteration
+
+import (
+	"github.com/squareup/pranadb/shakti/cmn"
+)
 
 type ChainingIterator struct {
 	iters []Iterator
@@ -9,7 +13,7 @@ func NewChainingIterator(iters []Iterator) *ChainingIterator {
 	return &ChainingIterator{iters: iters}
 }
 
-func (c *ChainingIterator) Current() KV {
+func (c *ChainingIterator) Current() cmn.KV {
 	return c.iters[c.pos].Current()
 }
 

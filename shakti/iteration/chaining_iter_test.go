@@ -1,4 +1,4 @@
-package shakti
+package iteration
 
 import (
 	"testing"

@@ -1,16 +1,21 @@
-package shakti
+package iteration
 
-import "bytes"
+import (
+	"bytes"
+	"github.com/squareup/pranadb/shakti/cmn"
+)
 
 type MergingIterator struct {
-	iters   []Iterator
-	current KV
-	valid   bool
+	iters              []Iterator
+	preserveTombstones bool
+	current            cmn.KV
+	valid              bool
 }
 
-func NewMergingIterator(iters []Iterator) (Iterator, error) {
+func NewMergingIterator(iters []Iterator, preserveTombstones bool) (Iterator, error) {
 	mi := &MergingIterator{
-		iters: iters,
+		iters:              iters,
+		preserveTombstones: preserveTombstones,
 	}
 	if err := mi.Next(); err != nil {
 		return nil, err
@@ -18,9 +23,9 @@ func NewMergingIterator(iters []Iterator) (Iterator, error) {
 	return mi, nil
 }
 
-func (m *MergingIterator) Current() KV {
+func (m *MergingIterator) Current() cmn.KV {
 	if !m.valid {
-		return KV{}
+		return cmn.KV{}
 	}
 	return m.current
 }
@@ -45,7 +50,7 @@ func (m *MergingIterator) Next() error {
 		}
 		first := true
 		// Take the first occurrence left to right of the smallest key as the current entry
-		// Move all occurrences of the iters wth that key to the next
+		// Move all occurrences of the iters with that key to the next
 
 		for _, iter := range m.iters {
 			valid := iter.IsValid()
@@ -54,7 +59,7 @@ func (m *MergingIterator) Next() error {
 				if bytes.Equal(c.Key, smallestKey) {
 					if first {
 						//  nil value means deleted
-						if c.Value != nil {
+						if c.Value != nil || m.preserveTombstones {
 							m.current = c
 							m.valid = true
 							// Not deleted - we will exit the outer loop

@@ -1,9 +1,11 @@
-package shakti
+package mem
 
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/errors"
+	"github.com/squareup/pranadb/shakti/cmn"
+	"github.com/squareup/pranadb/shakti/sst"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -32,7 +34,7 @@ func TestMemTableFlushSize(t *testing.T) {
 			break
 		}
 	}
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, memTable.commonPrefix,
+	sstable, _, _, err := sst.BuildSSTable(cmn.DataFormatV1, 0, 0, memTable.commonPrefix,
 		memTable.NewIterator([]byte("someprefix/"), nil))
 	require.NoError(t, err)
 	data := sstable.Serialize()
@@ -221,7 +223,7 @@ func TestMTIteratorMultipleIterators(t *testing.T) {
 	}
 
 	for _, ch := range chans {
-		err := <- ch
+		err := <-ch
 		require.NoError(t, err)
 	}
 }
@@ -241,6 +243,7 @@ func TestMTIteratorIterateInRange(t *testing.T) {
 }
 
 func testMTIteratorIterateInRange(t *testing.T, keyStart []byte, keyEnd []byte, expectedFirst int, expectedLast int) {
+	t.Helper()
 	memTable := NewMemtable(1024 * 1024)
 	numEntries := 100
 	batch := &Batch{
@@ -268,6 +271,7 @@ func testMTIteratorIterateInRange(t *testing.T, keyStart []byte, keyEnd []byte, 
 }
 
 func addToMemtable(t *testing.T, memTable *Memtable, key string, value string) {
+	t.Helper()
 	kvs := make(map[string][]byte)
 	kvs[key] = []byte(value)
 	batch := &Batch{
@@ -279,6 +283,7 @@ func addToMemtable(t *testing.T, memTable *Memtable, key string, value string) {
 }
 
 func addToMemtableWithByteSlice(t *testing.T, memTable *Memtable, key string, value []byte) {
+	t.Helper()
 	kvs := make(map[string][]byte)
 	kvs[key] = value
 	batch := &Batch{

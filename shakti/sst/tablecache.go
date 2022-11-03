@@ -1,17 +1,21 @@
-package shakti
+package sst
 
 import (
 	"github.com/squareup/pranadb/common"
+	"github.com/squareup/pranadb/shakti/cloudstore"
 	"sync"
 )
 
-// TODO should  LRU and L0 should always be pinned - we can have a two level cache for this
-type TableCache struct {
+type Cache struct {
 	cache      sync.Map
-	cloudStore CloudStore
+	cloudStore cloudstore.Store
 }
 
-func (tc *TableCache) GetSSTable(tableID SSTableID) (*SSTable, error) {
+func NewTableCache(store cloudstore.Store) *Cache {
+	return &Cache{cloudStore: store}
+}
+
+func (tc *Cache) GetSSTable(tableID SSTableID) (*SSTable, error) {
 	skey := common.ByteSliceToStringZeroCopy(tableID)
 	t, ok := tc.cache.Load(skey)
 	if ok {
@@ -30,7 +34,7 @@ func (tc *TableCache) GetSSTable(tableID SSTableID) (*SSTable, error) {
 	return ssTable, nil
 }
 
-func (tc *TableCache) AddSSTable(tableID SSTableID, table *SSTable) error {
+func (tc *Cache) AddSSTable(tableID SSTableID, table *SSTable) error {
 	skey := common.ByteSliceToStringZeroCopy(tableID)
 	tc.cache.Store(skey, table)
 	return nil

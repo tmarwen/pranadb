@@ -1,8 +1,10 @@
-package shakti
+package sst
 
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	"github.com/squareup/pranadb/shakti/cmn"
+	"github.com/squareup/pranadb/shakti/iteration"
 	"github.com/stretchr/testify/require"
 	"math/rand"
 	"testing"
@@ -12,9 +14,9 @@ func TestBuildTable(t *testing.T) {
 	commonPrefix := []byte("keyprefix/")
 	numEntries := 1000
 	iter := prepareInput(commonPrefix, []byte("valueprefix/"), numEntries)
-	sstable, smallestKey, largestKey, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, iter)
+	sstable, smallestKey, largestKey, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, iter)
 	require.NoError(t, err)
-	require.Equal(t, FormatV1, sstable.format)
+	require.Equal(t, cmn.DataFormatV1, sstable.format)
 	require.Equal(t, numEntries, sstable.numEntries)
 	require.Equal(t, commonPrefix, sstable.commonPrefix)
 	expectedSmallestKey := []byte(fmt.Sprintf("%ssomekey-%010d", string(commonPrefix), 0))
@@ -26,13 +28,13 @@ func TestBuildTable(t *testing.T) {
 func TestBuildWithTombstones(t *testing.T) {
 	commonPrefix := []byte("keyPrefix/")
 
-	gi := &genIter{}
-	gi.addKV([]byte("keyPrefix/key0"), nil)
-	gi.addKV([]byte("keyPrefix/key1"), []byte("val1"))
-	gi.addKV([]byte("keyPrefix/key2"), []byte("val2"))
-	gi.addKV([]byte("keyPrefix/key3"), nil)
+	gi := &iteration.StaticIterator{}
+	gi.AddKV([]byte("keyPrefix/key0"), nil)
+	gi.AddKV([]byte("keyPrefix/key1"), []byte("val1"))
+	gi.AddKV([]byte("keyPrefix/key2"), []byte("val2"))
+	gi.AddKV([]byte("keyPrefix/key3"), nil)
 
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, gi)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, gi)
 	require.NoError(t, err)
 
 	iter, err := sstable.NewIterator([]byte("keyPrefix/"), nil)
@@ -78,15 +80,15 @@ func TestSeek(t *testing.T) {
 	// Add a few more entries so we can test seeking to next
 	key := fmt.Sprintf("%ssomekey-%010d", string(commonPrefix), 1500)
 	value := fmt.Sprintf("%ssomevalue-%010d", "valueprefix/", 1500)
-	iter.addKVAsString(key, value)
+	iter.AddKVAsString(key, value)
 	key = fmt.Sprintf("%ssomekey-%010d1234", string(commonPrefix), 1550)
 	value = fmt.Sprintf("%ssomevalue-%010d1234", "valueprefix/", 1550)
-	iter.addKVAsString(key, value)
+	iter.AddKVAsString(key, value)
 	key = fmt.Sprintf("%ssomekey-%010d", string(commonPrefix), 1600)
 	value = fmt.Sprintf("%ssomevalue-%010d", "valueprefix/", 1600)
-	iter.addKVAsString(key, value)
+	iter.AddKVAsString(key, value)
 
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, iter)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, iter)
 	require.NoError(t, err)
 
 	// Seek some random keys - exact match
@@ -125,6 +127,7 @@ func TestSeek(t *testing.T) {
 }
 
 func seek(t *testing.T, seekKey []byte, expectedKey []byte, expectedValue []byte, valid bool, sstable *SSTable) {
+	t.Helper()
 	log.Printf("Seeking to key %s", string(seekKey))
 	iter, err := sstable.NewIterator(seekKey, nil)
 	require.NoError(t, err)
@@ -140,19 +143,19 @@ func seek(t *testing.T, seekKey []byte, expectedKey []byte, expectedValue []byte
 
 func TestIterateWithGaps(t *testing.T) {
 	commonPrefix := []byte("keyprefix/")
-	it := &genIter{}
+	it := &iteration.StaticIterator{}
 	// Add a few more entries so we can test seeking to next
 	key := fmt.Sprintf("%ssomekey-%010d", string(commonPrefix), 1500)
 	value := fmt.Sprintf("%ssomevalue-%010d", "valueprefix/", 1500)
-	it.addKVAsString(key, value)
+	it.AddKVAsString(key, value)
 	key = fmt.Sprintf("%ssomekey-%010d1234", string(commonPrefix), 1550)
 	value = fmt.Sprintf("%ssomevalue-%010d1234", "valueprefix/", 1550)
-	it.addKVAsString(key, value)
+	it.AddKVAsString(key, value)
 	key = fmt.Sprintf("%ssomekey-%010d", string(commonPrefix), 1600)
 	value = fmt.Sprintf("%ssomevalue-%010d", "valueprefix/", 1600)
-	it.addKVAsString(key, value)
+	it.AddKVAsString(key, value)
 
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, it)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, it)
 	require.NoError(t, err)
 	iter, err := sstable.NewIterator([]byte("keyprefix/somekey-0000001501"), nil)
 	require.NoError(t, err)
@@ -188,10 +191,11 @@ func TestIterate(t *testing.T) {
 }
 
 func testIterate(t *testing.T, startKey []byte, endKey []byte, firstExpected int, lastExpected int) {
+	t.Helper()
 	commonPrefix := []byte("keyprefix/")
 	numEntries := 1000
 	it := prepareInput(commonPrefix, []byte("valueprefix/"), numEntries)
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, it)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, it)
 	require.NoError(t, err)
 
 	iter, err := sstable.NewIterator(startKey, endKey)
@@ -221,7 +225,7 @@ func TestSerializeDeserialize(t *testing.T) {
 	commonPrefix := []byte("keyprefix/")
 	numEntries := 1000
 	iter := prepareInput(commonPrefix, []byte("valueprefix/"), numEntries)
-	sstable, _, _, err := BuildSSTable(FormatV1, 0, 0, commonPrefix, iter)
+	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, iter)
 	require.NoError(t, err)
 	buff := sstable.Serialize()
 
@@ -236,50 +240,12 @@ func TestSerializeDeserialize(t *testing.T) {
 	require.Equal(t, sstable.data, sstable2.data)
 }
 
-func prepareInput(keyPrefix []byte, valuePrefix []byte, numEntries int) *genIter {
-	gi := &genIter{}
+func prepareInput(keyPrefix []byte, valuePrefix []byte, numEntries int) *iteration.StaticIterator {
+	gi := &iteration.StaticIterator{}
 	for i := 0; i < numEntries; i++ {
 		key := fmt.Sprintf("%ssomekey-%010d", string(keyPrefix), i)
 		value := fmt.Sprintf("%ssomevalue-%010d", string(valuePrefix), i)
-		gi.addKVAsString(key, value)
+		gi.AddKVAsString(key, value)
 	}
 	return gi
-}
-
-type genIter struct {
-	kvs []KV
-	pos int
-}
-
-func (g *genIter) addKVAsString(k string, v string) {
-	g.kvs = append(g.kvs, KV{
-		Key:   []byte(k),
-		Value: []byte(v),
-	})
-}
-
-func (g *genIter) addKV(k []byte, v []byte) {
-	g.kvs = append(g.kvs, KV{
-		Key:   k,
-		Value: v,
-	})
-}
-
-func (g *genIter) Current() KV {
-	if g.pos == -1 {
-		return KV{}
-	}
-	return g.kvs[g.pos]
-}
-
-func (g *genIter) Next() error {
-	g.pos++
-	if g.pos == len(g.kvs) {
-		g.pos = -1
-	}
-	return nil
-}
-
-func (g *genIter) IsValid() bool {
-	return g.pos != -1
 }

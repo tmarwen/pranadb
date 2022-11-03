@@ -1,4 +1,4 @@
-package shakti
+package mem
 
 import (
 	"fmt"

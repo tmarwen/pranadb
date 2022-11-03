@@ -1,10 +1,11 @@
-package shakti
+package mem
 
 import (
 	"bytes"
 	"github.com/andy-kimball/arenaskl"
 	"github.com/squareup/pranadb/common"
-	"sync/atomic"
+	common2 "github.com/squareup/pranadb/shakti/cmn"
+	"github.com/squareup/pranadb/shakti/iteration"
 )
 
 type DeleteRange struct {
@@ -23,18 +24,11 @@ type Batch struct {
 	DeleteRanges []DeleteRange
 }
 
+// Memtable TODO range deletes
 type Memtable struct {
 	sl           *arenaskl.Skiplist
-	maxSize      int
 	commonPrefix []byte
-	sstableInfo  atomic.Value
 	writeIter    arenaskl.Iterator
-}
-
-type SSTableInfo struct {
-	ssTableID   SSTableID
-	largestKey  []byte
-	smallestKey []byte
 }
 
 func NewMemtable(maxMemSize int) *Memtable {
@@ -66,9 +60,8 @@ func (m *Memtable) Write(batch *Batch) (bool, error) {
 			if err == arenaskl.ErrArenaFull {
 				// Memtable has reached max size
 				return false, nil
-			} else {
-				return false, err
 			}
+			return false, err
 		}
 	}
 
@@ -76,15 +69,14 @@ func (m *Memtable) Write(batch *Batch) (bool, error) {
 }
 
 func (m *Memtable) updateCommonPrefix(key []byte) {
-	lk := len(key)
 	lcp := len(m.commonPrefix)
 	var l int
-	if lk < lcp {
+	if lk := len(key); lk < lcp {
 		l = lk
 	} else {
 		l = lcp
 	}
-	i := 0
+	var i int
 	for i = 0; i < l; i++ {
 		if key[i] != m.commonPrefix[i] {
 			break
@@ -108,7 +100,7 @@ func (m *Memtable) replicateBatch(batch *Batch) error {
 	return nil
 }
 
-func (m *Memtable) NewIterator(keyStart []byte, keyEnd []byte) Iterator {
+func (m *Memtable) NewIterator(keyStart []byte, keyEnd []byte) iteration.Iterator {
 	var it arenaskl.Iterator
 	it.Init(m.sl)
 	if keyStart == nil {
@@ -142,7 +134,7 @@ type MemtableIterator struct {
 	initialSeek bool
 }
 
-func (m *MemtableIterator) Current() KV {
+func (m *MemtableIterator) Current() common2.KV {
 	if !m.it.Valid() {
 		panic("not valid")
 	}
@@ -151,7 +143,7 @@ func (m *MemtableIterator) Current() KV {
 	if len(v) == 0 {
 		v = nil
 	}
-	return KV{
+	return common2.KV{
 		Key:   k,
 		Value: v,
 	}
@@ -197,22 +189,8 @@ func (m *MemtableIterator) IsValid() bool {
 			m.it = m.prevIt
 			m.prevIt = nil
 			return true
-		} else {
-			m.prevIt = &cp
 		}
+		m.prevIt = &cp
 	}
 	return false
-}
-
-// Called after the ssTable for the memtable has been stored to cloud storage
-func (m *Memtable) setSSTableInfo(ssTableInfo *SSTableInfo) {
-	m.sstableInfo.Store(ssTableInfo)
-}
-
-func (m *Memtable) getSSTableInfo() *SSTableInfo {
-	s := m.sstableInfo.Load()
-	if s == nil {
-		return nil
-	}
-	return s.(*SSTableInfo)
 }
