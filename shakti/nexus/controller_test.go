@@ -15,12 +15,6 @@ import (
 
 /*
 
-TODO
-
-13. Test flushing. Add manual flush we can call from tests. Make sure new segments and latest state is stored to cloud store
-14. Make changes, flush, repeat, flush several times, restart controller from cloud store. Verify state is all there.
-15. Add check on cloud store that there are no orphaned segments in cloud store after deleting.
-
 16. Test recovery. Make changes, replicate but don't flush. Change leader, recover, make sure state is recovered, flushed
 and no data lost.
 17. As above but test case where new leader doesn't have the data as joined later and didn't get the previous flush. It should ask other nodes for data
@@ -243,6 +237,55 @@ func TestAddAndGet_MultipleLevels(t *testing.T) {
 	}, overlapTableIDs)
 
 	afterTest(t, cntrl)
+}
+
+func TestAddAndGetAll_MultipleSegments(t *testing.T) {
+	cntrl := setupControllerWithMaxEntries(t, 100)
+
+	numEntries := 1000
+	var pairs []int
+	ks := 0
+	for i := 0; i < numEntries; i++ {
+		pairs = append(pairs, ks, ks+1)
+		ks += 3
+	}
+	addedTableIDs := addTables(t, cntrl, 1, pairs...)
+
+	mr := cntrl.getMasterRecord()
+	// Should be 10 segments
+	require.Equal(t, 10, len(mr.levelSegmentEntries[1]))
+
+	// Now get them all, spanning multiple segments
+	oids, err := cntrl.GetTableIDsForRange(nil, nil, 1000000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	require.Equal(t, addedTableIDs, []sst.SSTableID(ids))
+}
+
+func TestAddAndGetMost_MultipleSegments(t *testing.T) {
+	cntrl := setupControllerWithMaxEntries(t, 100)
+
+	numEntries := 1000
+	var pairs []int
+	ks := 0
+	for i := 0; i < numEntries; i++ {
+		pairs = append(pairs, ks, ks+1)
+		ks += 2
+	}
+	addedTableIDs := addTables(t, cntrl, 1, pairs...)
+
+	mr := cntrl.getMasterRecord()
+	// Should be 10 segments
+	require.Equal(t, 10, len(mr.levelSegmentEntries[1]))
+
+	// Now get most of them, spanning multiple segments
+	oids, err := cntrl.GetTableIDsForRange(createKey(2), createKey(2*(numEntries-2)), 1000000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	expected := addedTableIDs[1 : len(addedTableIDs)-2]
+	require.Equal(t, expected, []sst.SSTableID(ids))
 }
 
 func TestAddAndRemove_L0(t *testing.T) {
@@ -730,7 +773,7 @@ func setupControllerWithMaxEntries(t *testing.T, maxSegmentTableEntries int) *co
 		LogFileName:                    "test_reg.log",
 	}
 	cloudStore := &cloudstore.LocalStore{}
-	cntrl := newController(conf, cloudStore, &NoopReplicator{})
+	cntrl := newController(conf, cloudStore, &cmn.NoopReplicator{})
 	err := cntrl.Start()
 	require.NoError(t, err)
 	err = cntrl.SetLeader()
@@ -804,9 +847,264 @@ func createRegistrationEntries(t *testing.T, level int, pairs ...int) ([]Registr
 	return regEntries, tableIDs
 }
 
-type NoopReplicator struct {
+func TestDataResetOnRestartWithoutFlush(t *testing.T) {
+	cntrl := setupController(t)
+	tabIDs := addTables(t, cntrl, 1, 3, 5, 6, 7, 8, 12)
+	oids, err := cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	require.Equal(t, tabIDs, []sst.SSTableID(ids))
+
+	err = cntrl.Stop()
+	require.NoError(t, err)
+
+	err = cntrl.Start()
+	require.NoError(t, err)
+
+	oids, err = cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Nil(t, oids)
 }
 
-func (n NoopReplicator) ReplicateMessage(message []byte) error {
-	return nil
+func TestDataRestoredOnRestartWithFlush(t *testing.T) {
+	cntrl := setupController(t)
+	tabIDs := addTables(t, cntrl, 1, 3, 5, 6, 7, 8, 12)
+	oids, err := cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	require.Equal(t, tabIDs, []sst.SSTableID(ids))
+
+	_, _, err = cntrl.Flush()
+	require.NoError(t, err)
+	ver := cntrl.getMasterRecord().version
+
+	err = cntrl.Stop()
+	require.NoError(t, err)
+	err = cntrl.Start()
+	require.NoError(t, err)
+
+	oids, err = cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids = oids[0]
+	require.Equal(t, tabIDs, []sst.SSTableID(ids))
+
+	ver2 := cntrl.getMasterRecord().version
+	require.Equal(t, ver, ver2)
+}
+
+func TestFlushManyAdds(t *testing.T) {
+	cntrl := setupControllerWithMaxEntries(t, 100)
+	numAdds := 1000
+	ks := 0
+	var allTabIDs []sst.SSTableID
+	for i := 0; i < numAdds; i++ {
+		tabIDs := addTables(t, cntrl, 1, ks, ks+1)
+		ks += 3
+		allTabIDs = append(allTabIDs, tabIDs...)
+	}
+
+	oids, err := cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	require.Equal(t, allTabIDs, []sst.SSTableID(ids))
+
+	mr := cntrl.getMasterRecord()
+	ver := mr.version
+	require.Equal(t, numAdds, int(ver))
+	// Should be 10 segments
+	require.Equal(t, 10, len(mr.levelSegmentEntries[1]))
+
+	segsAdded, segsDeleted, err := cntrl.Flush()
+	require.NoError(t, err)
+	require.Equal(t, 10, segsAdded)
+	require.Equal(t, 0, segsDeleted)
+
+	err = cntrl.Stop()
+	require.NoError(t, err)
+	err = cntrl.Start()
+	require.NoError(t, err)
+
+	oids, err = cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids = oids[0]
+	require.Equal(t, allTabIDs, []sst.SSTableID(ids))
+
+	ver2 := cntrl.getMasterRecord().version
+	require.Equal(t, ver, ver2)
+}
+
+func TestFlushManyAddsAndSomeDeletes(t *testing.T) {
+	cntrl := setupControllerWithMaxEntries(t, 100)
+	numAdds := 1000
+	ks := 0
+	var allTabIDs []sst.SSTableID
+	for i := 0; i < numAdds; i++ {
+		tabIDs := addTables(t, cntrl, 1, ks, ks+1)
+		ks += 3
+		allTabIDs = append(allTabIDs, tabIDs...)
+	}
+	mr := cntrl.getMasterRecord()
+	ver := mr.version
+	require.Equal(t, numAdds, int(ver))
+	// Should be 10 segments
+	require.Equal(t, 10, len(mr.levelSegmentEntries[1]))
+
+	// Now we delete enough to reduce number of segments to 9
+	numDels := 100
+	var deregEntries []RegistrationEntry
+	ks = 0
+	for i := 0; i < numDels; i++ {
+		deregEntries = append(deregEntries, RegistrationEntry{
+			Level:    1,
+			TableID:  allTabIDs[i],
+			KeyStart: createKey(ks),
+			KeyEnd:   createKey(ks + 1),
+		})
+		ks += 3
+	}
+	err := cntrl.ApplyChanges(RegistrationBatch{
+		Deregistrations: deregEntries,
+	})
+	require.NoError(t, err)
+
+	mr = cntrl.getMasterRecord()
+	// Should be 9 segments
+	require.Equal(t, 9, len(mr.levelSegmentEntries[1]))
+
+	ver = mr.version
+	require.Equal(t, numAdds+1, int(ver))
+
+	// Even though we created 10 and deleted one segment, overall we just pushed 9 adds
+	segsAdded, segsDeleted, err := cntrl.Flush()
+	require.NoError(t, err)
+	require.Equal(t, 9, segsAdded)
+	require.Equal(t, 0, segsDeleted)
+
+	err = cntrl.Stop()
+	require.NoError(t, err)
+	err = cntrl.Start()
+	require.NoError(t, err)
+
+	oids, err := cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	require.Equal(t, allTabIDs[100:], []sst.SSTableID(ids))
+
+	ver2 := cntrl.getMasterRecord().version
+	require.Equal(t, ver, ver2)
+}
+
+func TestFlushManyDeletes(t *testing.T) {
+	// First add a bunch
+	cntrl := setupControllerWithMaxEntries(t, 100)
+	numAdds := 1000
+	ks := 0
+	var allTabIDs []sst.SSTableID
+	for i := 0; i < numAdds; i++ {
+		tabIDs := addTables(t, cntrl, 1, ks, ks+1)
+		ks += 3
+		allTabIDs = append(allTabIDs, tabIDs...)
+	}
+	mr := cntrl.getMasterRecord()
+	ver := mr.version
+	require.Equal(t, numAdds, int(ver))
+	// Should be 10 segments
+	require.Equal(t, 10, len(mr.levelSegmentEntries[1]))
+	// Now flush
+	segsAdded, segsDeleted, err := cntrl.Flush()
+	require.NoError(t, err)
+	require.Equal(t, 10, segsAdded)
+	require.Equal(t, 0, segsDeleted)
+
+	// Now we delete enough to reduce number of segments to 9
+	numDels := 200
+	var deregEntries []RegistrationEntry
+	ks = 0
+	for i := 0; i < numDels; i++ {
+		deregEntries = append(deregEntries, RegistrationEntry{
+			Level:    1,
+			TableID:  allTabIDs[i],
+			KeyStart: createKey(ks),
+			KeyEnd:   createKey(ks + 1),
+		})
+		ks += 3
+	}
+	err = cntrl.ApplyChanges(RegistrationBatch{
+		Deregistrations: deregEntries,
+	})
+	require.NoError(t, err)
+
+	mr = cntrl.getMasterRecord()
+	ver = mr.version
+	require.Equal(t, numAdds+1, int(ver))
+	// Should be 8 segments
+	require.Equal(t, 8, len(mr.levelSegmentEntries[1]))
+
+	segsAdded, segsDeleted, err = cntrl.Flush()
+	require.NoError(t, err)
+	require.Equal(t, 0, segsAdded)
+	require.Equal(t, 2, segsDeleted)
+
+	err = cntrl.Stop()
+	require.NoError(t, err)
+	err = cntrl.Start()
+	require.NoError(t, err)
+
+	oids, err := cntrl.GetTableIDsForRange(nil, nil, 100000)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(oids))
+	ids := oids[0]
+	require.Equal(t, allTabIDs[200:], []sst.SSTableID(ids))
+
+	ver2 := cntrl.getMasterRecord().version
+	require.Equal(t, ver, ver2)
+}
+
+func TestMultipleFlushes(t *testing.T) {
+	// First add a bunch
+	cntrl := setupControllerWithMaxEntries(t, 100)
+	numAdds := 1000
+
+	ks := 0
+	var allTabIDs []sst.SSTableID
+	for i := 0; i < numAdds; i++ {
+
+		tabIDs := addTables(t, cntrl, 1, ks, ks+1)
+		ks += 3
+		allTabIDs = append(allTabIDs, tabIDs...)
+
+		mr := cntrl.getMasterRecord()
+		ver := mr.version
+		require.Equal(t, i+1, int(ver))
+
+		oids, err := cntrl.GetTableIDsForRange(nil, nil, 100000)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(oids))
+		ids := oids[0]
+		require.Equal(t, allTabIDs, []sst.SSTableID(ids))
+
+		_, _, err = cntrl.Flush()
+		require.NoError(t, err)
+
+		err = cntrl.Stop()
+		require.NoError(t, err)
+		err = cntrl.Start()
+		require.NoError(t, err)
+
+		mr = cntrl.getMasterRecord()
+		ver = mr.version
+		require.Equal(t, i+1, int(ver))
+
+		oids, err = cntrl.GetTableIDsForRange(nil, nil, 100000)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(oids))
+		ids = oids[0]
+		require.Equal(t, allTabIDs, []sst.SSTableID(ids))
+	}
 }

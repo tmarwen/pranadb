@@ -22,7 +22,7 @@ type Controller interface {
 	Start() error
 	Stop() error
 	Validate(validateTables bool) error
-	Flush() error
+	Flush() (int, int, error)
 }
 
 type NonoverlappingTableIDs []sst.SSTableID
@@ -70,6 +70,8 @@ func newController(conf Conf, cloudStore cloudstore.Store, replicator Replicator
 }
 
 func (c *controller) Start() error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	buff, err := c.cloudStore.Get([]byte(c.conf.MasterRegistryRecordID))
 	if err != nil {
 		return err
@@ -92,6 +94,13 @@ func (c *controller) Start() error {
 	return nil
 }
 
+func (c *controller) Stop() error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.masterRecord = nil
+	return nil
+}
+
 func (c *controller) updateMasterRecordBufferSizeEstimate(buffSize int) {
 	if buffSize > c.masterRecordBufferSizeEstimate {
 		c.masterRecordBufferSizeEstimate = int(float64(buffSize) * 1.05)
@@ -102,10 +111,6 @@ func (c *controller) updateSegmentBufferSizeEstimate(buffSize int) {
 	if buffSize > c.segmentBufferSizeEstimate {
 		c.segmentBufferSizeEstimate = int(float64(buffSize) * 1.05)
 	}
-}
-
-func (c *controller) Stop() error {
-	return nil
 }
 
 func (c *controller) SetLeader() error {
@@ -179,7 +184,7 @@ func (c *controller) GetTableIDsForRange(keyStart []byte, keyEnd []byte, maxTabl
 				// TODO For L0 where there is overlap and a single segment, we could use an interval tree
 				// TODO for L > 0 where there is no overlap we can use binary search to locate the segments
 				// and also to locate the table ids in the segment
-				tableIDs = c.findTableIDsWithOverlapInSegment(seg, keyStart, keyEnd)
+				tableIDs = append(tableIDs, c.findTableIDsWithOverlapInSegment(seg, keyStart, keyEnd)...)
 			}
 		}
 		if level == 0 {
@@ -661,7 +666,7 @@ func (c *controller) recover() (bool, error) {
 
 }
 
-func (c *controller) Flush() error {
+func (c *controller) Flush() (int, int, error) {
 
 	/*
 		When we apply a batch we first replicate the batch, then we process the batch on the leader, updating the in-memory
@@ -683,10 +688,10 @@ func (c *controller) Flush() error {
 	*/
 
 	c.lock.Lock()
-	if len(c.segmentsToAdd) == 0 || len(c.segmentsToDelete) == 0 {
+	if len(c.segmentsToAdd) == 0 && len(c.segmentsToDelete) == 0 {
 		// No changes since last flush
 		c.lock.Unlock()
-		return nil
+		return 0, 0, nil
 	}
 	masterRecordToFlush := c.masterRecord.copy()
 	segsToAdd := c.segmentsToAdd
@@ -698,27 +703,29 @@ func (c *controller) Flush() error {
 	// TODO add and delete them in parallel
 
 	// First delete segments
+	segsDeleted := len(segsToDelete)
 	for sid := range segsToDelete {
 		segID := common.StringToByteSliceZeroCopy(sid)
 		if err := c.cloudStore.Delete(segID); err != nil {
-			return err
+			return 0, 0, err
 		}
 	}
 	// Then the adds
+	segsAdded := len(segsToAdd)
 	for sid, seg := range segsToAdd {
 		segID := common.StringToByteSliceZeroCopy(sid)
-		buff := make([]byte, c.segmentBufferSizeEstimate)
+		buff := make([]byte, 0, c.segmentBufferSizeEstimate)
 		buff = seg.serialize(buff)
 		c.updateSegmentBufferSizeEstimate(len(buff))
 		if err := c.cloudStore.Add(segID, buff); err != nil {
-			return err
+			return 0, 0, err
 		}
 	}
 	// Once they've all been added we can flush the master record
-	buff := make([]byte, c.masterRecordBufferSizeEstimate)
+	buff := make([]byte, 0, c.masterRecordBufferSizeEstimate)
 	buff = masterRecordToFlush.serialize(buff)
 	c.updateMasterRecordBufferSizeEstimate(len(buff))
-	return c.cloudStore.Add([]byte(c.conf.MasterRegistryRecordID), buff)
+	return segsAdded, segsDeleted, c.cloudStore.Add([]byte(c.conf.MasterRegistryRecordID), buff)
 }
 
 func (c *controller) maybeTriggerCompaction() error {

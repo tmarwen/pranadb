@@ -5,8 +5,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/common"
 	"github.com/squareup/pranadb/shakti/cloudstore"
-	common2 "github.com/squareup/pranadb/shakti/cmn"
-	iters2 "github.com/squareup/pranadb/shakti/iteration"
+	"github.com/squareup/pranadb/shakti/cmn"
+	"github.com/squareup/pranadb/shakti/iteration"
 	"github.com/squareup/pranadb/shakti/mem"
 	"github.com/squareup/pranadb/shakti/nexus"
 	"github.com/squareup/pranadb/shakti/sst"
@@ -15,7 +15,7 @@ import (
 )
 
 type Shakti struct {
-	conf         common2.Conf
+	conf         cmn.Conf
 	memtable     *mem.Memtable
 	cloudStore   cloudstore.Store
 	registry     nexus.Controller
@@ -26,9 +26,10 @@ type Shakti struct {
 	// We use a separate lock to protect the flush queue as we don't want removing first element from queue to block
 	// writes to the memtable
 	mtFlushQueueLock common.SpinLock
+	iterators        map[*shaktiIterator]struct{}
 }
 
-func NewShakti(store cloudstore.Store, registry nexus.Controller, conf common2.Conf) *Shakti {
+func NewShakti(store cloudstore.Store, registry nexus.Controller, conf cmn.Conf) *Shakti {
 	memtable := mem.NewMemtable(conf.MemtableMaxSizeBytes)
 	return &Shakti{
 		conf:        conf,
@@ -37,6 +38,7 @@ func NewShakti(store cloudstore.Store, registry nexus.Controller, conf common2.C
 		registry:    registry,
 		TableCache:  sst.NewTableCache(store),
 		mtFlushChan: make(chan struct{}, conf.MemtableFlushQueueMaxSize),
+		iterators:   map[*shaktiIterator]struct{}{},
 	}
 }
 
@@ -61,26 +63,57 @@ func (s *Shakti) Write(batch *mem.Batch) error {
 		}
 
 		// No more space left in memtable - swap writeIter out and replace writeIter with a new one and flush writeIter async
-		s.mtLock.Lock()
-		if memtable == s.memtable {
-
-			// It hasn't already been swapped so swap writeIter
-			s.memtable = mem.NewMemtable(s.conf.MemtableMaxSizeBytes)
-
-			s.mtFlushQueueLock.Lock()
-			s.mtFlushQueue = append(s.mtFlushQueue, mtFlushEntry{
-				memtable: memtable,
-			})
-			s.mtFlushQueueLock.Unlock()
-			s.mtFlushChan <- struct{}{}
-
-			// TODO we need to add the new memtable as the zeroth element in any existing merging iterators!!
+		if err := s.replaceMemtable(memtable); err != nil {
+			return err
 		}
-		s.mtLock.Unlock()
 	}
 }
 
-func (s *Shakti) ReceiveReplicatedBatch(batch *mem.Batch) error {
+// Used in testing only
+func (s *Shakti) forceReplaceMemtable() error {
+	s.mtLock.Lock()
+	defer s.mtLock.Unlock()
+	return s.replaceMemtable0(s.memtable)
+}
+
+func (s *Shakti) replaceMemtable(memtable *mem.Memtable) error {
+	s.mtLock.Lock()
+	defer s.mtLock.Unlock()
+	return s.replaceMemtable0(memtable)
+}
+
+func (s *Shakti) replaceMemtable0(memtable *mem.Memtable) error {
+	if memtable == s.memtable {
+		log.Debug("Adding memtable to flush queue and creating a new one")
+
+		// It hasn't already been swapped so swap writeIter
+		s.memtable = mem.NewMemtable(s.conf.MemtableMaxSizeBytes)
+
+		if err := s.updateIterators(s.memtable); err != nil {
+			return err
+		}
+
+		s.mtFlushQueueLock.Lock()
+		s.mtFlushQueue = append(s.mtFlushQueue, mtFlushEntry{
+			memtable: memtable,
+		})
+		s.mtFlushQueueLock.Unlock()
+		s.mtFlushChan <- struct{}{}
+	}
+	return nil
+}
+
+func (s *Shakti) updateIterators(mt *mem.Memtable) error {
+	for iter := range s.iterators {
+		rs, re, lastKey := iter.getRange()
+		if lastKey != nil {
+			rs = common.IncrementBytesBigEndian(lastKey)
+		}
+		mtIter := mt.NewIterator(rs, re)
+		if err := iter.addNewMemtableIterator(mtIter); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -92,13 +125,17 @@ func (s *Shakti) doWrite(batch *mem.Batch) (*mem.Memtable, bool, error) {
 	return mt, ok, err
 }
 
-func (s *Shakti) getMemtable() *mem.Memtable {
-	s.mtLock.RLock()
-	defer s.mtLock.RUnlock()
-	return s.memtable
+func (s *Shakti) ReceiveReplicatedBatch(batch *mem.Batch) error {
+	return nil
 }
 
-func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (iters2.Iterator, error) {
+//func (s *Shakti) getMemtable() *mem.Memtable {
+//	s.mtLock.RLock()
+//	defer s.mtLock.RUnlock()
+//	return s.memtable
+//}
+
+func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (iteration.Iterator, error) {
 
 	ids, err := s.registry.GetTableIDsForRange(keyStart, keyEnd, 10000) // TODO don't hardcode
 	if err != nil {
@@ -108,9 +145,10 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (iters2.Iterator, e
 	// TODO we should prevent very slow or stalled iterators from holding memtables or sstables in memory too long
 	// we should detect if they are very slow, and close them if they are
 	s.mtLock.RLock()
+	defer s.mtLock.RUnlock()
 	// We creating a merging iterator which merges from a set of potentially overlapping Memtables/SSTables in order
 	// from newest to oldest
-	iters := make([]iters2.Iterator, len(ids)+1+len(s.mtFlushQueue))
+	iters := make([]iteration.Iterator, len(ids)+1+len(s.mtFlushQueue))
 	pos := 0
 	// First we add the current memtable
 	iters[pos] = s.memtable.NewIterator(keyStart, keyEnd)
@@ -123,7 +161,6 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (iters2.Iterator, e
 		pos++
 	}
 	s.mtFlushQueueLock.Unlock()
-	s.mtLock.RUnlock()
 
 	// Then we add each flushed SSTable with overlapping keys from the registry. It's possible we might have the included
 	// the same keys twice in a memtable from the flush queue which has been already flushed and one from the registry
@@ -141,20 +178,31 @@ func (s *Shakti) NewIterator(keyStart []byte, keyEnd []byte) (iters2.Iterator, e
 			// LazySSTableIterators (e.g. in the case the range is large and there is a huge amount of data in storage)
 			// We should get at most X table Ids per level, and the chain iterator knows how to extend itself by asking
 			// for more ids using GetTableIDsForRange
-			chainIters := make([]iters2.Iterator, len(nonOverLapIDs))
-			for i, nonOverlapID := range nonOverLapIDs {
+			chainIters := make([]iteration.Iterator, len(nonOverLapIDs))
+			for j, nonOverlapID := range nonOverLapIDs {
 				lazy, err := sst.NewLazySSTableIterator(nonOverlapID, s.TableCache, keyStart, keyEnd)
 				if err != nil {
 					return nil, err
 				}
-				chainIters[i] = lazy
+				chainIters[j] = lazy
 			}
-			iters[i+pos] = iters2.NewChainingIterator(iters)
+			iters[i+pos] = iteration.NewChainingIterator(iters)
 		}
 		pos++
 	}
 
-	return iters2.NewMergingIterator(iters, false)
+	si, err := s.newShaktiIterator(keyStart, keyEnd, iters, &s.mtLock)
+	if err != nil {
+		return nil, err
+	}
+	s.iterators[si] = struct{}{}
+	return si, nil
+}
+
+func (s *Shakti) removeIterator(iter *shaktiIterator) {
+	s.mtLock.Lock()
+	defer s.mtLock.Unlock()
+	delete(s.iterators, iter)
 }
 
 type bufSizeEstimates struct {
@@ -232,6 +280,8 @@ func (s *Shakti) mtFlushRunLoop() {
 			}); err != nil {
 				log.Errorf("failed to register sstable %+v", err)
 				return
+			} else {
+				log.Debug("registered sstable in controller")
 			}
 		}
 		s.mtFlushQueue = s.mtFlushQueue[i:]
@@ -244,6 +294,7 @@ func (s *Shakti) mtFlushRunLoop() {
 		entriesEstimate := bufEstimates.getMtEntriesEstimate()
 		// We flush in parallel as cloud storage can have a high latency
 		go func() {
+			log.Debug("flushing memtable")
 			buffSize, entries, err := s.flushMemtable(flushEntry, buffSizeEstimate, entriesEstimate)
 			if err != nil {
 				log.Errorf("failed to flush memtable %+v", err)
@@ -272,14 +323,74 @@ func (s *Shakti) flushMemtable(flushEntry mtFlushEntry, buffSizeEstimate int, en
 	if err := s.TableCache.AddSSTable(id, ssTable); err != nil {
 		return 0, 0, err
 	}
+	log.Debug("added sstable to table cache")
 	tableBytes := ssTable.Serialize()
 	if err := s.cloudStore.Add(id, tableBytes); err != nil {
 		return 0, 0, err
 	}
+	log.Debug("added sstable to cloud storage")
 	flushEntry.setSSTableInfo(&ssTableInfo{
 		ssTableID:   id,
 		largestKey:  largestKey,
 		smallestKey: smallestKey,
 	})
+	log.Debug("flushed memtable to sstable")
 	return len(tableBytes), ssTable.NumEntries(), nil
+}
+
+func (s *Shakti) newShaktiIterator(rangeStart []byte, rangeEnd []byte, iters []iteration.Iterator, lock *sync.RWMutex) (*shaktiIterator, error) {
+	mi, err := iteration.NewMergingIterator(iters, false)
+	if err != nil {
+		return nil, err
+	}
+	si := &shaktiIterator{
+		s:          s,
+		lock:       lock,
+		rangeStart: rangeStart,
+		rangeEnd:   rangeEnd,
+		mi:         mi,
+	}
+	return si, nil
+}
+
+type shaktiIterator struct {
+	s          *Shakti
+	lock       *sync.RWMutex
+	rangeStart []byte
+	rangeEnd   []byte
+	lastKey    []byte
+	mi         *iteration.MergingIterator
+}
+
+func (s *shaktiIterator) getRange() ([]byte, []byte, []byte) {
+	return s.rangeStart, s.rangeEnd, s.lastKey
+}
+
+func (s *shaktiIterator) addNewMemtableIterator(iter iteration.Iterator) error {
+	return s.mi.PrependIterator(iter)
+}
+
+func (s *shaktiIterator) Close() error {
+	s.s.removeIterator(s)
+	return nil
+}
+
+func (s *shaktiIterator) Current() cmn.KV {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	curr := s.mi.Current()
+	s.lastKey = curr.Key
+	return curr
+}
+
+func (s *shaktiIterator) Next() error {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.mi.Next()
+}
+
+func (s *shaktiIterator) IsValid() (bool, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.mi.IsValid()
 }

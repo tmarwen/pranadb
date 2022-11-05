@@ -3,6 +3,7 @@ package mem
 import (
 	"bytes"
 	"github.com/andy-kimball/arenaskl"
+	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/common"
 	common2 "github.com/squareup/pranadb/shakti/cmn"
 	"github.com/squareup/pranadb/shakti/iteration"
@@ -20,6 +21,8 @@ func NewBatch() *Batch {
 }
 
 type Batch struct {
+	// TODO we should use a skiplist not a map, as it's better if we apply entries to the memtable in key order
+	// rather than undefined map order, as it's likely to be faster (benchmark this!)
 	KVs          map[string][]byte
 	DeleteRanges []DeleteRange
 }
@@ -43,13 +46,23 @@ func NewMemtable(maxMemSize int) *Memtable {
 func (m *Memtable) Write(batch *Batch) (bool, error) {
 
 	// Before a batch is available for reading in the MemTable we must replicate writeIter
+	// TODO move this into shakti
 	if err := m.replicateBatch(batch); err != nil {
 		return false, err
 	}
 
 	for k, v := range batch.KVs {
+		log.Debugf("adding key %s to memtable %p", k, m)
 		kk := common.StringToByteSliceZeroCopy(k)
-		m.updateCommonPrefix(kk)
+		if m.commonPrefix == nil {
+			m.commonPrefix = kk
+		} else {
+			commonPrefixLen := findCommonPrefix(kk, m.commonPrefix)
+			if len(m.commonPrefix) != commonPrefixLen {
+				m.commonPrefix = m.commonPrefix[:commonPrefixLen]
+			}
+		}
+
 		var err error
 		if err = m.writeIter.Add(kk, v, 0); err != nil {
 			if err == arenaskl.ErrRecordExists {
@@ -58,33 +71,36 @@ func (m *Memtable) Write(batch *Batch) (bool, error) {
 		}
 		if err != nil {
 			if err == arenaskl.ErrArenaFull {
+				log.Debug("memtable is full")
 				// Memtable has reached max size
 				return false, nil
 			}
 			return false, err
 		}
+		// We delete, as in the case the Arena becomes full, we want to retry the batch after the memtable is replaced
+		// and we don't want to resubmit entries from the batch that were successfully submitted
+		delete(batch.KVs, k)
 	}
 
 	return true, nil
 }
 
-func (m *Memtable) updateCommonPrefix(key []byte) {
-	lcp := len(m.commonPrefix)
+func findCommonPrefix(key1 []byte, key2 []byte) int {
+	lk1 := len(key1) //nolint:ifshort
+	lk2 := len(key2) //nolint:ifshort
 	var l int
-	if lk := len(key); lk < lcp {
-		l = lk
+	if lk1 < lk2 {
+		l = lk1
 	} else {
-		l = lcp
+		l = lk2
 	}
 	var i int
 	for i = 0; i < l; i++ {
-		if key[i] != m.commonPrefix[i] {
+		if key1[i] != key2[i] {
 			break
 		}
 	}
-	if i != lcp {
-		m.commonPrefix = m.commonPrefix[:i]
-	}
+	return i
 }
 
 func (m *Memtable) replicateBatch(batch *Batch) error {
@@ -162,7 +178,7 @@ func (m *MemtableIterator) Next() error {
 	return nil
 }
 
-func (m *MemtableIterator) IsValid() bool {
+func (m *MemtableIterator) IsValid() (bool, error) {
 	if !m.initialSeek {
 		if m.keyStart == nil {
 			m.it.SeekToFirst()
@@ -174,10 +190,10 @@ func (m *MemtableIterator) IsValid() bool {
 		}
 	}
 	if m.endOfRange {
-		return false
+		return false, nil
 	}
 	if m.it.Valid() {
-		return true
+		return true, nil
 	}
 	// We have to cache the previous value of the iterator before we moved to nil node (invalid)
 	// that's where new entries will be added
@@ -188,9 +204,13 @@ func (m *MemtableIterator) IsValid() bool {
 			// There are new entries - reset the iterator to prev.next
 			m.it = m.prevIt
 			m.prevIt = nil
-			return true
+			return true, nil
 		}
 		m.prevIt = &cp
 	}
-	return false
+	return false, nil
+}
+
+func (m *MemtableIterator) Close() error {
+	return nil
 }

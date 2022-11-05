@@ -7,5 +7,6 @@ import (
 type Iterator interface {
 	Current() cmn.KV
 	Next() error
-	IsValid() bool
+	IsValid() (bool, error)
+	Close() error
 }

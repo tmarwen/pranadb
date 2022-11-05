@@ -39,7 +39,14 @@ func MergeSSTables(format cmn.DataFormat, ssTables ...*sst.SSTable) ([]TableEntr
 		return nil, err
 	}
 	var outTables []TableEntry
-	for mi.IsValid() {
+	for {
+		v, err := mi.IsValid()
+		if err != nil {
+			return nil, err
+		}
+		if !v {
+			break
+		}
 		msIter := newMaxSizeIterator(mi, targetTableSizeBytes, len(commonPrefix))
 		// TODO come up with a good estimate of the below!
 		buffSizeEstimate := 0
@@ -89,11 +96,15 @@ func (s *maxSizeIterator) Next() error {
 	return s.Next()
 }
 
-func (s *maxSizeIterator) IsValid() bool {
+func (s *maxSizeIterator) IsValid() (bool, error) {
 	if !s.valid {
-		return false
+		return false, nil
 	}
 	return s.mergIter.IsValid()
+}
+
+func (s *maxSizeIterator) Close() error {
+	return nil
 }
 
 func findCommonPrefix(pref1 []byte, pref2 []byte) []byte {

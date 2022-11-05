@@ -21,7 +21,10 @@ func (c *ChainingIterator) Next() error {
 	if err := c.iters[c.pos].Next(); err != nil {
 		return err
 	}
-	valid := c.iters[c.pos].IsValid()
+	valid, err := c.iters[c.pos].IsValid()
+	if err != nil {
+		return err
+	}
 	if valid {
 		return nil
 	}
@@ -29,9 +32,13 @@ func (c *ChainingIterator) Next() error {
 	return nil
 }
 
-func (c *ChainingIterator) IsValid() bool {
+func (c *ChainingIterator) IsValid() (bool, error) {
 	if c.pos >= len(c.iters) {
-		return false
+		return false, nil
 	}
 	return c.iters[c.pos].IsValid()
+}
+
+func (c *ChainingIterator) Close() error {
+	return nil
 }

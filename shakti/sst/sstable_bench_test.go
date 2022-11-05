@@ -81,7 +81,7 @@ func BenchmarkSeekSSTable(b *testing.B) {
 			keyToSeek := keysToSeek[j]
 			iter, err := sstable.NewIterator(keyToSeek, nil)
 			require.NoError(b, err)
-			require.True(b, iter.IsValid())
+			requireIterValid(b, iter, true)
 		}
 	}
 }
@@ -103,7 +103,12 @@ func BenchmarkIterateAllSSTable(b *testing.B) {
 		iter, err := sstable.NewIterator(commonPrefix, nil)
 		require.NoError(b, err)
 		count := 0
-		for iter.IsValid() {
+		for {
+			v, err := iter.IsValid()
+			require.NoError(b, err)
+			if !v {
+				break
+			}
 			curr := iter.Current()
 			require.NotNil(b, curr.Key)
 			require.NotNil(b, curr.Value)

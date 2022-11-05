@@ -2,51 +2,18 @@ package mem
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/errors"
-	"github.com/squareup/pranadb/shakti/cmn"
-	"github.com/squareup/pranadb/shakti/sst"
+	"github.com/squareup/pranadb/shakti/iteration"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
 
-func TestMemTableFlushSize(t *testing.T) {
-	memTableMaxSize := 1024 * 1024
-	memTable := NewMemtable(memTableMaxSize)
-	value := make([]byte, 200)
-	for i := 0; i < len(value); i++ {
-		value[i] = 'a'
-	}
-	i := 0
-	for {
-		kvs := make(map[string][]byte)
-		key := fmt.Sprintf("someprefix/somekey-%010d", i)
-		i++
-		kvs[key] = value
-		batch := &Batch{
-			KVs: kvs,
-		}
-		ok, err := memTable.Write(batch)
-		require.NoError(t, err)
-		if !ok {
-			// It's full
-			break
-		}
-	}
-	sstable, _, _, err := sst.BuildSSTable(cmn.DataFormatV1, 0, 0, memTable.commonPrefix,
-		memTable.NewIterator([]byte("someprefix/"), nil))
-	require.NoError(t, err)
-	data := sstable.Serialize()
-	log.Printf("size is %d", len(data))
-	require.GreaterOrEqual(t, len(data), memTableMaxSize)
-}
-
 func TestMTIteratorPicksUpNewRecords(t *testing.T) {
 	memTable := NewMemtable(1024 * 1024)
 
 	iter := memTable.NewIterator(nil, nil)
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
 
 	addToMemtable(t, memTable, "key0", "val0")
 	addToMemtable(t, memTable, "key1", "val1")
@@ -55,10 +22,10 @@ func TestMTIteratorPicksUpNewRecords(t *testing.T) {
 	addToMemtable(t, memTable, "key4", "val4")
 
 	// Iter won't see elements added after writeIter's reached the end
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 
 	for i := 0; i < 5; i++ {
-		require.True(t, iter.IsValid())
+		requireIterValid(t, iter, true)
 		curr := iter.Current()
 		require.Equal(t, fmt.Sprintf("key%d", i), string(curr.Key))
 		require.Equal(t, fmt.Sprintf("val%d", i), string(curr.Value))
@@ -67,18 +34,18 @@ func TestMTIteratorPicksUpNewRecords(t *testing.T) {
 	}
 
 	// Call it twice to make sure isValid doesn't change state
-	require.False(t, iter.IsValid())
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
+	requireIterValid(t, iter, false)
 	addToMemtable(t, memTable, "key5", "val5")
-	require.True(t, iter.IsValid())
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
+	requireIterValid(t, iter, true)
 
 	curr := iter.Current()
 	require.Equal(t, "key5", string(curr.Key))
 	require.Equal(t, "val5", string(curr.Value))
 	err := iter.Next()
 	require.NoError(t, err)
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
 }
 
 func TestMTIteratorAddNonKeyOrder(t *testing.T) {
@@ -91,9 +58,9 @@ func TestMTIteratorAddNonKeyOrder(t *testing.T) {
 	addToMemtable(t, memTable, "key4", "val4")
 
 	iter := memTable.NewIterator(nil, nil)
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	for i := 0; i < 5; i++ {
-		require.True(t, iter.IsValid())
+		requireIterValid(t, iter, true)
 		curr := iter.Current()
 		require.Equal(t, fmt.Sprintf("key%d", i), string(curr.Key))
 		require.Equal(t, fmt.Sprintf("val%d", i), string(curr.Value))
@@ -112,9 +79,9 @@ func TestMTIteratorAddInNonKeyOrder(t *testing.T) {
 	addToMemtable(t, memTable, "key4", "val4")
 
 	iter := memTable.NewIterator(nil, nil)
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	for i := 0; i < 5; i++ {
-		require.True(t, iter.IsValid())
+		requireIterValid(t, iter, true)
 		curr := iter.Current()
 		require.Equal(t, fmt.Sprintf("key%d", i), string(curr.Key))
 		require.Equal(t, fmt.Sprintf("val%d", i), string(curr.Value))
@@ -135,9 +102,9 @@ func TestMTIteratorOverwriteKeys(t *testing.T) {
 	addToMemtable(t, memTable, "key0", "val6")
 
 	iter := memTable.NewIterator(nil, nil)
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	for i := 0; i < 5; i++ {
-		require.True(t, iter.IsValid())
+		requireIterValid(t, iter, true)
 		curr := iter.Current()
 		j := i
 		if i == 0 {
@@ -162,9 +129,9 @@ func TestMTIteratorTombstones(t *testing.T) {
 	addToMemtableWithByteSlice(t, memTable, "key4", nil)
 
 	iter := memTable.NewIterator(nil, nil)
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	for i := 0; i < 5; i++ {
-		require.True(t, iter.IsValid())
+		requireIterValid(t, iter, true)
 		curr := iter.Current()
 		require.Equal(t, fmt.Sprintf("key%d", i), string(curr.Key))
 		if i == 1 || i == 4 {
@@ -198,7 +165,15 @@ func TestMTIteratorMultipleIterators(t *testing.T) {
 		go func() {
 			iter := memTable.NewIterator(nil, nil)
 			for i := 0; i < numEntries; i++ {
-				for !iter.IsValid() {
+				for {
+					v, err := iter.IsValid()
+					if err != nil {
+						ch <- err
+						return
+					}
+					if v {
+						break
+					}
 					// Wait for producer to catch up
 					time.Sleep(100 * time.Microsecond)
 				}
@@ -214,7 +189,12 @@ func TestMTIteratorMultipleIterators(t *testing.T) {
 					ch <- err
 				}
 			}
-			if iter.IsValid() {
+			v, err := iter.IsValid()
+			if err != nil {
+				ch <- err
+				return
+			}
+			if v {
 				ch <- errors.New("iter should not be valid")
 				return
 			}
@@ -260,14 +240,14 @@ func testMTIteratorIterateInRange(t *testing.T, keyStart []byte, keyEnd []byte, 
 
 	iter := memTable.NewIterator(keyStart, keyEnd)
 	for i := expectedFirst; i <= expectedLast; i++ {
-		require.True(t, iter.IsValid())
+		requireIterValid(t, iter, true)
 		curr := iter.Current()
 		require.Equal(t, fmt.Sprintf("prefix/key%010d", i), string(curr.Key))
 		require.Equal(t, fmt.Sprintf("val%010d", i), string(curr.Value))
 		err = iter.Next()
 		require.NoError(t, err)
 	}
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
 }
 
 func addToMemtable(t *testing.T, memTable *Memtable, key string, value string) {
@@ -292,4 +272,28 @@ func addToMemtableWithByteSlice(t *testing.T, memTable *Memtable, key string, va
 	ok, err := memTable.Write(batch)
 	require.NoError(t, err)
 	require.True(t, ok)
+}
+
+func TestCommonPrefix(t *testing.T) {
+	testCommonPrefix(t, "someprefix", "someprefix", 10)
+	testCommonPrefix(t, "somepre", "someprefix", 7)
+	testCommonPrefix(t, "someprefix", "somepre", 7)
+	testCommonPrefix(t, "s", "someprefix", 1)
+	testCommonPrefix(t, "someprefix", "s", 1)
+	testCommonPrefix(t, "otherprefix", "someprefix", 0)
+	testCommonPrefix(t, "", "someprefix", 0)
+	testCommonPrefix(t, "someprefix", "", 0)
+}
+
+func testCommonPrefix(t *testing.T, prefix1 string, prefix2 string, expected int) {
+	t.Helper()
+	cpl := findCommonPrefix([]byte(prefix1), []byte(prefix2))
+	require.Equal(t, expected, cpl)
+}
+
+func requireIterValid(t *testing.T, iter iteration.Iterator, valid bool) {
+	t.Helper()
+	v, err := iter.IsValid()
+	require.NoError(t, err)
+	require.Equal(t, valid, v)
 }

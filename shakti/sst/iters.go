@@ -78,8 +78,12 @@ func (si *SSTableIterator) Next() error {
 	return nil
 }
 
-func (si *SSTableIterator) IsValid() bool {
-	return si.valid
+func (si *SSTableIterator) IsValid() (bool, error) {
+	return si.valid, nil
+}
+
+func (si *SSTableIterator) Close() error {
+	return nil
 }
 
 type LazySSTableIterator struct {
@@ -121,6 +125,10 @@ func (l *LazySSTableIterator) Next() error {
 	return l.iter.Next()
 }
 
-func (l *LazySSTableIterator) IsValid() bool {
+func (l *LazySSTableIterator) IsValid() (bool, error) {
 	return l.iter.IsValid()
+}
+
+func (l *LazySSTableIterator) Close() error {
+	return nil
 }

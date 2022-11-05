@@ -44,7 +44,14 @@ func BuildSSTable(format cmn.DataFormat, buffSizeEstimate int, entriesEstimate i
 	numEntries := 0
 	first := true
 	var prevKey []byte
-	for iter.IsValid() {
+	for {
+		v, err := iter.IsValid()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if !v {
+			break
+		}
 		kv := iter.Current()
 		// Sanity checks - can maybe remove them or activate them only with a flag for performance
 		if len(kv.Key) < lcp || bytes.Compare(commonPrefix, kv.Key[:lcp]) != 0 {

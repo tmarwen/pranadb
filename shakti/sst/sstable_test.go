@@ -40,35 +40,35 @@ func TestBuildWithTombstones(t *testing.T) {
 	iter, err := sstable.NewIterator([]byte("keyPrefix/"), nil)
 	require.NoError(t, err)
 
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	curr := iter.Current()
 	require.Equal(t, "keyPrefix/key0", string(curr.Key))
 	require.Nil(t, curr.Value)
 	err = iter.Next()
 	require.NoError(t, err)
 
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	curr = iter.Current()
 	require.Equal(t, "keyPrefix/key1", string(curr.Key))
 	require.Equal(t, "val1", string(curr.Value))
 	err = iter.Next()
 	require.NoError(t, err)
 
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	curr = iter.Current()
 	require.Equal(t, "keyPrefix/key2", string(curr.Key))
 	require.Equal(t, "val2", string(curr.Value))
 	err = iter.Next()
 	require.NoError(t, err)
 
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	curr = iter.Current()
 	require.Equal(t, "keyPrefix/key3", string(curr.Key))
 	require.Nil(t, curr.Value)
 	err = iter.Next()
 	require.NoError(t, err)
 
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
 }
 
 func TestSeek(t *testing.T) {
@@ -132,10 +132,10 @@ func seek(t *testing.T, seekKey []byte, expectedKey []byte, expectedValue []byte
 	iter, err := sstable.NewIterator(seekKey, nil)
 	require.NoError(t, err)
 	if !valid {
-		require.False(t, iter.IsValid())
+		requireIterValid(t, iter, false)
 		return
 	}
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	kv := iter.Current()
 	require.Equal(t, string(expectedKey), string(kv.Key))
 	require.Equal(t, string(expectedValue), string(kv.Value))
@@ -159,19 +159,19 @@ func TestIterateWithGaps(t *testing.T) {
 	require.NoError(t, err)
 	iter, err := sstable.NewIterator([]byte("keyprefix/somekey-0000001501"), nil)
 	require.NoError(t, err)
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	kv := iter.Current()
 	require.Equal(t, []byte("keyprefix/somekey-00000015501234"), kv.Key)
 	require.Equal(t, []byte("valueprefix/somevalue-00000015501234"), kv.Value)
 	err = iter.Next()
 	require.NoError(t, err)
-	require.True(t, iter.IsValid())
+	requireIterValid(t, iter, true)
 	kv = iter.Current()
 	require.Equal(t, []byte("keyprefix/somekey-0000001600"), kv.Key)
 	require.Equal(t, []byte("valueprefix/somevalue-0000001600"), kv.Value)
 	err = iter.Next()
 	require.NoError(t, err)
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
 }
 
 func TestIterate(t *testing.T) {
@@ -202,22 +202,27 @@ func testIterate(t *testing.T, startKey []byte, endKey []byte, firstExpected int
 	require.NoError(t, err)
 
 	if firstExpected == -1 {
-		require.False(t, iter.IsValid())
+		requireIterValid(t, iter, false)
 		return
 	}
 
 	i := firstExpected
-	for iter.IsValid() && i <= lastExpected {
+	for i <= lastExpected {
+		valid, err := iter.IsValid()
+		require.NoError(t, err)
+		if !valid {
+			break
+		}
 		kv := iter.Current()
 		k := []byte(fmt.Sprintf("keyprefix/somekey-%010d", i))
 		v := []byte(fmt.Sprintf("valueprefix/somevalue-%010d", i))
 		require.Equal(t, k, kv.Key)
 		require.Equal(t, v, kv.Value)
 		i++
-		err := iter.Next()
+		err = iter.Next()
 		require.NoError(t, err)
 	}
-	require.False(t, iter.IsValid())
+	requireIterValid(t, iter, false)
 	require.Nil(t, iter.Next())
 }
 
@@ -248,4 +253,10 @@ func prepareInput(keyPrefix []byte, valuePrefix []byte, numEntries int) *iterati
 		gi.AddKVAsString(key, value)
 	}
 	return gi
+}
+
+func requireIterValid(t require.TestingT, iter iteration.Iterator, valid bool) {
+	v, err := iter.IsValid()
+	require.NoError(t, err)
+	require.Equal(t, valid, v)
 }

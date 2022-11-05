@@ -120,7 +120,14 @@ func (c *controller) validateTable(te *tableEntry) error {
 	}
 	first := true
 	var prevKey []byte
-	for iter.IsValid() {
+	for {
+		v, err := iter.IsValid()
+		if err != nil {
+			return err
+		}
+		if !v {
+			break
+		}
 		curr := iter.Current()
 		if first {
 			if !bytes.Equal(te.rangeStart, curr.Key) {
