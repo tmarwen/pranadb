@@ -6,9 +6,10 @@ import (
 	"github.com/squareup/pranadb/shakti/cmn"
 	"github.com/squareup/pranadb/shakti/iteration"
 	"github.com/stretchr/testify/require"
-	"math/rand"
 	"testing"
 )
+
+// TODO tests for LazySSTableIterator!!
 
 func TestBuildTable(t *testing.T) {
 	commonPrefix := []byte("keyprefix/")
@@ -91,11 +92,10 @@ func TestSeek(t *testing.T) {
 	sstable, _, _, err := BuildSSTable(cmn.DataFormatV1, 0, 0, commonPrefix, iter)
 	require.NoError(t, err)
 
-	// Seek some random keys - exact match
-	for i := 0; i < 100; i++ {
-		r := rand.Intn(numEntries)
-		k := []byte(fmt.Sprintf("keyprefix/somekey-%010d", r))
-		v := []byte(fmt.Sprintf("valueprefix/somevalue-%010d", r))
+	// Seek all the keys - exact match
+	for i := 0; i < numEntries; i++ {
+		k := []byte(fmt.Sprintf("keyprefix/somekey-%010d", i))
+		v := []byte(fmt.Sprintf("valueprefix/somevalue-%010d", i))
 		seek(t, k, k, v, true, sstable)
 	}
 
@@ -111,6 +111,9 @@ func TestSeek(t *testing.T) {
 	seek(t, []byte("keyprefix/uqwdiquwhdiuqwhdiuqhwdiuqhwdiuhqwd"), nil, nil, false, sstable)
 
 	//should find next key greater than
+	seek(t, nil, []byte("keyprefix/somekey-0000000000"), []byte("valueprefix/somevalue-0000000000"), true, sstable)
+	seek(t, []byte("a"), []byte("keyprefix/somekey-0000000000"), []byte("valueprefix/somevalue-0000000000"), true, sstable)
+	seek(t, []byte("aaaaaaaaa/"), []byte("keyprefix/somekey-0000000000"), []byte("valueprefix/somevalue-0000000000"), true, sstable)
 	seek(t, []byte("keyprefix/"), []byte("keyprefix/somekey-0000000000"), []byte("valueprefix/somevalue-0000000000"), true, sstable)
 	seek(t, []byte("keyprefix/r"), []byte("keyprefix/somekey-0000000000"), []byte("valueprefix/somevalue-0000000000"), true, sstable)
 	seek(t, []byte("keyprefix/somekey"), []byte("keyprefix/somekey-0000000000"), []byte("valueprefix/somevalue-0000000000"), true, sstable)

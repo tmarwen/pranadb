@@ -28,14 +28,6 @@ type Controller interface {
 type NonoverlappingTableIDs []sst.SSTableID
 type OverlappingTableIDs []NonoverlappingTableIDs
 
-type Replicator interface {
-	ReplicateMessage(message []byte) error
-}
-
-type Replica interface {
-	ReceiveReplicationMessage(message []byte) error
-}
-
 type controller struct {
 	lock                           sync.RWMutex
 	format                         cmn.MetadataFormat
@@ -47,18 +39,18 @@ type controller struct {
 	segmentsToDelete               map[string]struct{}
 	masterRecordBufferSizeEstimate int
 	segmentBufferSizeEstimate      int
-	replicator                     Replicator
+	replicator                     cmn.Replicator
 	logFile                        *os.File
 	receivedFlush                  bool
 	leader                         bool
 }
 
 // NewController TODO add total tables counter and keep track of tables per segment average so we can monitor fragmentation
-func NewController(conf Conf, cloudStore cloudstore.Store, replicator Replicator) Controller {
+func NewController(conf Conf, cloudStore cloudstore.Store, replicator cmn.Replicator) Controller {
 	return newController(conf, cloudStore, replicator)
 }
 
-func newController(conf Conf, cloudStore cloudstore.Store, replicator Replicator) *controller {
+func newController(conf Conf, cloudStore cloudstore.Store, replicator cmn.Replicator) *controller {
 	return &controller{
 		format:           conf.RegistryFormat,
 		cloudStore:       cloudStore,

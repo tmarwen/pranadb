@@ -150,6 +150,10 @@ func (s *SSTable) Deserialize(buff []byte, offset int) int {
 	return offset
 }
 
+func (s *SSTable) SizeBytes() int {
+	return len(s.data) + 16 + len(s.commonPrefix)
+}
+
 func (s *SSTable) CommonPrefix() []byte {
 	return s.commonPrefix
 }
@@ -165,36 +169,40 @@ func appendBytesWithLengthPrefix(buff []byte, bytes []byte) []byte {
 }
 
 func (s *SSTable) findOffset(key []byte) int {
-	lcp := len(s.commonPrefix)
-	if len(key) < lcp || bytes.Compare(s.commonPrefix, key[:lcp]) != 0 {
-		panic("key does not have common prefix")
-	}
-	keyNoPrefix := key[lcp:]
 	indexRecordLen := s.maxKeyLength + 4
-	// We do a binary search in the index
+	d := bytes.Compare(key, s.commonPrefix)
+	var index int
+	if d <= 0 {
+		index = 0
+	} else {
+		lcp := len(s.commonPrefix)
+		keyNoPrefix := key[lcp:]
+		// We do a binary search in the index
+		low := 0
+		outerHighBound := s.numEntries - 1
+		high := outerHighBound
+		for low < high {
+			middle := low + (high-low)/2
+			recordStart := middle*indexRecordLen + s.indexOffset
+			midKey := s.data[recordStart : recordStart+s.maxKeyLength]
+			if bytes.Compare(midKey, keyNoPrefix) < 0 {
+				low = middle + 1
+			} else {
+				high = middle
+			}
+		}
+		if high == outerHighBound {
+			recordStart := high*indexRecordLen + s.indexOffset
+			highKey := s.data[recordStart : recordStart+s.maxKeyLength]
+			if bytes.Compare(highKey, keyNoPrefix) < 0 {
+				// Didn't find writeIter
+				return -1
+			}
+		}
+		index = high
+	}
 
-	low := 0
-	outerHighBound := s.numEntries - 1
-	high := outerHighBound
-	for low < high {
-		middle := low + (high-low)/2
-		recordStart := middle*indexRecordLen + s.indexOffset
-		midKey := s.data[recordStart : recordStart+s.maxKeyLength]
-		if bytes.Compare(midKey, keyNoPrefix) < 0 {
-			low = middle + 1
-		} else {
-			high = middle
-		}
-	}
-	if high == outerHighBound {
-		recordStart := high*indexRecordLen + s.indexOffset
-		highKey := s.data[recordStart : recordStart+s.maxKeyLength]
-		if bytes.Compare(highKey, keyNoPrefix) < 0 {
-			// Didn't find writeIter
-			return -1
-		}
-	}
-	recordStart := high*indexRecordLen + s.indexOffset
+	recordStart := index*indexRecordLen + s.indexOffset
 	valueStart := recordStart + s.maxKeyLength
 	off, _ := common.ReadUint32FromBufferLE(s.data, valueStart)
 	return int(off)

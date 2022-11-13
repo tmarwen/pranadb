@@ -101,9 +101,6 @@ func NewLazySSTableIterator(tableID SSTableID, tableCache *Cache, keyStart []byt
 		keyStart:   keyStart,
 		keyEnd:     keyEnd,
 	}
-	if err := it.Next(); err != nil {
-		return nil, err
-	}
 	return it, nil
 }
 
@@ -112,23 +109,37 @@ func (l *LazySSTableIterator) Current() common2.KV {
 }
 
 func (l *LazySSTableIterator) Next() error {
-	if l.iter == nil {
-		ssTable, err := l.tableCache.GetSSTable(l.tableID)
-		if err != nil {
-			return err
-		}
-		l.iter, err = ssTable.NewIterator(l.keyEnd, l.keyEnd)
-		if err != nil {
-			return err
-		}
+	iter, err := l.getIter()
+	if err != nil {
+		return err
 	}
-	return l.iter.Next()
+	return iter.Next()
 }
 
 func (l *LazySSTableIterator) IsValid() (bool, error) {
-	return l.iter.IsValid()
+	iter, err := l.getIter()
+	if err != nil {
+		return false, err
+	}
+	return iter.IsValid()
 }
 
 func (l *LazySSTableIterator) Close() error {
-	return nil
+	iter, err := l.getIter()
+	if err != nil {
+		return err
+	}
+	return iter.Close()
+}
+
+func (l *LazySSTableIterator) getIter() (iteration.Iterator, error) {
+	if l.iter == nil {
+		ssTable, err := l.tableCache.GetSSTable(l.tableID)
+		if err != nil {
+			return nil, err
+		}
+		l.iter, err = ssTable.NewIterator(l.keyEnd, l.keyEnd)
+		return l.iter, err
+	}
+	return l.iter, nil
 }

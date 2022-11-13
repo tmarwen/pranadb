@@ -3,6 +3,7 @@ package shakti
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	"github.com/squareup/pranadb/common/commontest"
 	"github.com/squareup/pranadb/shakti/cloudstore"
 	"github.com/squareup/pranadb/shakti/cmn"
 	"github.com/squareup/pranadb/shakti/iteration"
@@ -13,6 +14,18 @@ import (
 	"testing"
 	"time"
 )
+
+/*
+TODO
+
+1. Add lots of random keys data such that it creates multiple sstables in cloud store, then iterate the whole lot
+2. Add lots of random keys data as fast as we can until it creates lots of sstables in cloud store and at same time, iterate
+through the whole lot and make sure all is received.
+3. Add some latency on cloud store and do above again, verify that memtable flush queue doesn't get too big
+4. Like 2 but multiple concurent iterators
+5. Instead of random keys, add lots of sequential data, with multiple iterators reading a prefix of that - similar to how
+Kafka consumers would work
+*/
 
 func init() {
 	log.SetLevel(log.TraceLevel)
@@ -248,25 +261,94 @@ func TestIterateShuffledKeys(t *testing.T) {
 	iteratePairs(t, iter, 0, numEntries)
 }
 
+func TestPeriodicMemtableReplace(t *testing.T) {
+	// Make sure that the memtable is periodically replaced
+	maxReplaceTime := 250 * time.Millisecond
+	conf := cmn.Conf{
+		MemtableMaxSizeBytes:      1024 * 1024,
+		MemtableFlushQueueMaxSize: 4,
+		TableFormat:               cmn.DataFormatV1,
+		MemTableMaxReplaceTime:    maxReplaceTime,
+	}
+	shakti := setupShaktiWithConf(t, conf)
+	cs := shakti.cloudStore.(*cloudstore.LocalStore) //nolint:forcetypeassert
+
+	numIters := 3
+	ks := 0
+	start := time.Now()
+	for i := 0; i < numIters; i++ {
+		storeSize := cs.Size()
+
+		writeKVs(t, shakti, ks, 10)
+
+		commontest.WaitUntil(t, func() (bool, error) {
+			// Wait until the SSTable should has been pushed to the cloud store
+			return cs.Size() == storeSize+1, nil
+		})
+
+		// Make sure all the data is there
+		iter, err := shakti.NewIterator(nil, nil)
+		require.NoError(t, err)
+		iteratePairs(t, iter, 0, 10*(i+1))
+		err = iter.Next()
+		require.NoError(t, err)
+		requireIterValid(t, iter, false)
+		ks += 10
+	}
+	dur := time.Now().Sub(start)
+	require.True(t, dur > time.Duration(numIters)*maxReplaceTime)
+}
+
+func TestMemtableReplaceWhenMaxSizeReached(t *testing.T) {
+	conf := cmn.Conf{
+		MemtableMaxSizeBytes:      16 * 1024 * 1024,
+		MemtableFlushQueueMaxSize: 10,
+		TableFormat:               cmn.DataFormatV1,
+		MemTableMaxReplaceTime:    30 * time.Second,
+	}
+	shakti := setupShaktiWithConf(t, conf)
+	cs := shakti.cloudStore.(*cloudstore.LocalStore) //nolint:forcetypeassert
+
+	// Add entries until several SSTables have been flushed to cloud store
+	numSSTables := 10
+	ks := 0
+	sizeStart := 0
+	for cs.Size() < sizeStart+numSSTables {
+		writeKVs(t, shakti, ks, 10)
+		ks += 10
+	}
+
+	//iter, err := shakti.NewIterator(nil, nil)
+	//require.NoError(t, err)
+	//
+	//iteratePairs(t, iter, 0, ks)
+}
+
 func setupShakti(t *testing.T) *Shakti {
 	t.Helper()
 	conf := cmn.Conf{
 		MemtableMaxSizeBytes:      1024 * 1024,
 		MemtableFlushQueueMaxSize: 4,
 		TableFormat:               cmn.DataFormatV1,
+		MemTableMaxReplaceTime:    30 * time.Second,
 	}
+	return setupShaktiWithConf(t, conf)
+}
+
+func setupShaktiWithConf(t *testing.T, conf cmn.Conf) *Shakti {
+	t.Helper()
 	controllerConf := nexus.Conf{
 		RegistryFormat:                 cmn.MetadataFormatV1,
 		MasterRegistryRecordID:         "test.master",
 		MaxRegistrySegmentTableEntries: 100,
 		LogFileName:                    "shakti_repl.log",
 	}
-	cloudStore := &cloudstore.LocalStore{}
+	cloudStore := cloudstore.NewLocalStore(100 * time.Millisecond)
 	replicator := &cmn.NoopReplicator{}
 	controller := nexus.NewController(controllerConf, cloudStore, replicator)
 	err := controller.Start()
 	require.NoError(t, err)
-	shakti := NewShakti(cloudStore, controller, conf)
+	shakti := NewShakti(1, cloudStore, controller, conf)
 	err = shakti.Start()
 	require.NoError(t, err)
 	err = controller.SetLeader()
@@ -279,7 +361,7 @@ func iteratePairs(t *testing.T, iter iteration.Iterator, keyStart int, numPairs 
 	for i := 0; i < numPairs; i++ {
 		requireIterValid(t, iter, true)
 		curr := iter.Current()
-		log.Printf("got key %s value %s", string(curr.Key), string(curr.Value))
+		//log.Printf("got key %s value %s", string(curr.Key), string(curr.Value))
 		require.Equal(t, []byte(fmt.Sprintf("prefix/key-%010d", keyStart+i)), curr.Key)
 		require.Equal(t, []byte(fmt.Sprintf("prefix/value-%010d", keyStart+i)), curr.Value)
 		if i != numPairs-1 {
@@ -322,7 +404,6 @@ func writeKVsWithParams(t *testing.T, shakti *Shakti, keyStart int, numPairs int
 		} else {
 			v = []byte(fmt.Sprintf("prefix/value-%010d%s", keyStart+i, valueSuffix))
 		}
-		log.Printf("writing key %s value %s", k, string(v))
 		kvs[k] = v
 	}
 	batch := &mem.Batch{

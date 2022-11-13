@@ -1,7 +1,10 @@
 package cmn
 
+import "time"
+
 type Conf struct {
 	MemtableMaxSizeBytes      int
+	MemTableMaxReplaceTime    time.Duration
 	MemtableFlushQueueMaxSize int
 	TableFormat               DataFormat
 }

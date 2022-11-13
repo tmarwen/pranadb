@@ -7,7 +7,7 @@ import (
 )
 
 type Cache struct {
-	cache      sync.Map
+	cache      sync.Map // TODO should be lRU
 	cloudStore cloudstore.Store
 }
 

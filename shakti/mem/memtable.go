@@ -27,6 +27,36 @@ type Batch struct {
 	DeleteRanges []DeleteRange
 }
 
+func (b *Batch) Serialize(buff []byte) []byte {
+	buff = common.AppendUint32ToBufferLE(buff, uint32(len(b.KVs)))
+	for k, v := range b.KVs {
+		buff = common.AppendUint32ToBufferLE(buff, uint32(len(k)))
+		buff = append(buff, common.StringToByteSliceZeroCopy(k)...)
+		buff = common.AppendUint32ToBufferLE(buff, uint32(len(v)))
+		buff = append(buff, v...)
+	}
+	// TODO delete ranges
+	return buff
+}
+
+func (b *Batch) Deserialize(buff []byte, offset int) int {
+	l, offset := common.ReadUint32FromBufferLE(buff, offset)
+	b.KVs = make(map[string][]byte, l)
+	for i := 0; i < int(l); i++ {
+		var lk uint32
+		lk, offset = common.ReadUint32FromBufferLE(buff, offset)
+		k := common.ByteSliceToStringZeroCopy(buff[offset : offset+int(lk)])
+		offset += int(lk)
+		var lv uint32
+		lv, offset = common.ReadUint32FromBufferLE(buff, offset)
+		v := buff[offset : offset+int(lv)]
+		offset += int(lv)
+		b.KVs[k] = v
+	}
+	// TODO delete ranges
+	return offset
+}
+
 // Memtable TODO range deletes
 type Memtable struct {
 	sl           *arenaskl.Skiplist
@@ -44,15 +74,7 @@ func NewMemtable(maxMemSize int) *Memtable {
 }
 
 func (m *Memtable) Write(batch *Batch) (bool, error) {
-
-	// Before a batch is available for reading in the MemTable we must replicate writeIter
-	// TODO move this into shakti
-	if err := m.replicateBatch(batch); err != nil {
-		return false, err
-	}
-
 	for k, v := range batch.KVs {
-		log.Debugf("adding key %s to memtable %p", k, m)
 		kk := common.StringToByteSliceZeroCopy(k)
 		if m.commonPrefix == nil {
 			m.commonPrefix = kk
@@ -62,7 +84,6 @@ func (m *Memtable) Write(batch *Batch) (bool, error) {
 				m.commonPrefix = m.commonPrefix[:commonPrefixLen]
 			}
 		}
-
 		var err error
 		if err = m.writeIter.Add(kk, v, 0); err != nil {
 			if err == arenaskl.ErrRecordExists {
@@ -81,7 +102,6 @@ func (m *Memtable) Write(batch *Batch) (bool, error) {
 		// and we don't want to resubmit entries from the batch that were successfully submitted
 		delete(batch.KVs, k)
 	}
-
 	return true, nil
 }
 
@@ -101,19 +121,6 @@ func findCommonPrefix(key1 []byte, key2 []byte) int {
 		}
 	}
 	return i
-}
-
-func (m *Memtable) replicateBatch(batch *Batch) error {
-	// We replicate batches to all nodes, we also replicate an epoch number in the batch.
-	// Each replica maintains a copy of the memtable but only the processor actually stores SSTable to cloud
-	// We also replicate a notification when the memtable is flushed.
-	// Replicas only apply replicated batches if they have seen at least one flush or state won't be same.
-	// On failure of processor, another replica is elected processor. It may not have all data since last flush, especially
-	// if writeIter has recently joined, so writeIter asks all nodes for current memtable state for same epoch. Nodes won't respond unless
-	// they have seen one flush. Once writeIter has received recovered data writeIter can flush that and store writeIter in S3.
-	//
-
-	return nil
 }
 
 func (m *Memtable) NewIterator(keyStart []byte, keyEnd []byte) iteration.Iterator {

@@ -101,21 +101,33 @@ func BenchmarkIterateAllSSTable(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		iter, err := sstable.NewIterator(commonPrefix, nil)
-		require.NoError(b, err)
+		if err != nil {
+			panic(err)
+		}
 		count := 0
 		for {
 			v, err := iter.IsValid()
-			require.NoError(b, err)
+			if err != nil {
+				panic(err)
+			}
 			if !v {
 				break
 			}
 			curr := iter.Current()
-			require.NotNil(b, curr.Key)
-			require.NotNil(b, curr.Value)
+			if curr.Key == nil {
+				panic("nil key")
+			}
+			if curr.Value == nil {
+				panic("nil value")
+			}
 			err = iter.Next()
-			require.NoError(b, err)
+			if err != nil {
+				panic(err)
+			}
 			count++
 		}
-		require.Equal(b, numEntries, count)
+		if numEntries != count {
+			panic("wrong number of entries")
+		}
 	}
 }
