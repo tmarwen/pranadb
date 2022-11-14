@@ -18,45 +18,45 @@ import (
 )
 
 type ClusterManager struct {
-	conf Config
-	nodeHost *dragonboat.NodeHost
-	clients sync.Map
+	conf               Config
+	nodeHost           *dragonboat.NodeHost
+	clients            sync.Map
 	clientsByClusterID sync.Map
 }
 
 const (
 	// cluster state machine command
-	nodeStartedCommandID = 1
-	nodeStoppedCommandID = 2
+	nodeStartedCommandID     = 1
+	nodeStoppedCommandID     = 2
 	getClusterStateCommandID = 3
 	clockTickCommandID       = 4
-	setLeaderCommandID = 5
+	setLeaderCommandID       = 5
 )
 
 type ClusterConfig struct {
 	ClusterName string
-	ClusterID uint64
+	ClusterID   uint64
 }
 
 type Config struct {
 	ClusterManagerClusterID uint64
-	NodeID int
-	DataDir string
-	RaftListenAddresses []string
-	Clusters []ClusterConfig
-	RaftRTTMs uint64
-	RaftElectionRTT uint64
-	RaftHeartbeatRTT uint64
-	RaftMetricsEnabled bool
+	NodeID                  int
+	DataDir                 string
+	RaftListenAddresses     []string
+	Clusters                []ClusterConfig
+	RaftRTTMs               uint64
+	RaftElectionRTT         uint64
+	RaftHeartbeatRTT        uint64
+	RaftMetricsEnabled      bool
 	SequenceSnapshotEntries uint64
-	CompactionOverhead uint64
-	IntraClusterTLSConfig conf.TLSConfig
-	TickTimerPeriod time.Duration
+	CompactionOverhead      uint64
+	IntraClusterTLSConfig   conf.TLSConfig
+	TickTimerPeriod         time.Duration
 }
 
 func NewClusterManager(conf Config) *ClusterManager {
 	return &ClusterManager{
-		conf:     conf,
+		conf: conf,
 	}
 }
 
@@ -75,13 +75,13 @@ func (cm *ClusterManager) Start() error {
 	nodeAddress := cm.conf.RaftListenAddresses[cm.conf.NodeID]
 	dragonBoatDir := filepath.Join(cm.conf.DataDir, "raft")
 	nhc := config.NodeHostConfig{
-		DeploymentID:   cm.conf.ClusterManagerClusterID,
-		WALDir:         dragonBoatDir,
-		NodeHostDir:    dragonBoatDir,
-		RTTMillisecond: uint64(cm.conf.RaftRTTMs),
-		RaftAddress:    nodeAddress,
-		EnableMetrics:  cm.conf.RaftMetricsEnabled,
-		Expert:         config.GetDefaultExpertConfig(),
+		DeploymentID:      cm.conf.ClusterManagerClusterID,
+		WALDir:            dragonBoatDir,
+		NodeHostDir:       dragonBoatDir,
+		RTTMillisecond:    cm.conf.RaftRTTMs,
+		RaftAddress:       nodeAddress,
+		EnableMetrics:     cm.conf.RaftMetricsEnabled,
+		Expert:            config.GetDefaultExpertConfig(),
 		RaftEventListener: cm,
 	}
 	if cm.conf.IntraClusterTLSConfig.Enabled {
@@ -103,7 +103,7 @@ func (cm *ClusterManager) Start() error {
 	// Every node is a member of the raft group
 	initialMembers := make(map[uint64]string)
 	for nid, listenAddress := range cm.conf.RaftListenAddresses {
-		initialMembers[uint64(nid) + 1] = listenAddress
+		initialMembers[uint64(nid)+1] = listenAddress
 	}
 	// We start the cluster raft groups in parallel
 	var chans []chan error
@@ -112,20 +112,20 @@ func (cm *ClusterManager) Start() error {
 		rc := createRaftGroupConfig(cm.conf.NodeID, cc.ClusterID, cm.conf)
 		ch := make(chan error, 1)
 		chans = append(chans, ch)
+		clusterName := cc.ClusterName
 		go func() {
-			factory := func (_ uint64, _ uint64) sm.IStateMachine {
-				return &clusterStateMachine{
-					cm: cm,
-					thisNodeID: cm.conf.NodeID,
-					leaderID: -1,
-					clusterName: cc.ClusterName,
-				}
+			factory := func(_ uint64, _ uint64) sm.IStateMachine {
+				csm := &clusterStateMachine{cm: cm}
+				csm.state.thisNodeID = cm.conf.NodeID
+				csm.state.leaderID = -1
+				csm.state.clusterName = clusterName
+				return csm
 			}
 			ch <- nh.StartCluster(initialMembers, false, factory, rc)
 		}()
 	}
 	for _, ch := range chans {
-		err := <- ch
+		err := <-ch
 		if err != nil {
 			return err
 		}
@@ -205,13 +205,13 @@ func (cm *ClusterManager) getClient(clusterName string) (*clientClusterManager, 
 	o, ok := cm.clients.Load(clusterName)
 	if !ok {
 		// All clusters must be configured in the config file
-		return nil, errors.Errorf("unknown cluster %cm has it been configured in the cluster manager config?", clusterName)
+		return nil, errors.Errorf("unknown cluster %s has it been configured in the cluster manager config?", clusterName)
 	}
 	return o.(*clientClusterManager), nil
 }
 
 func (cm *ClusterManager) LeaderUpdated(info raftio.LeaderInfo) {
-	if info.NodeID != uint64(cm.conf.NodeID) + 1 {
+	if info.NodeID != uint64(cm.conf.NodeID)+1 {
 		panic("received leader info on wrong node")
 	}
 	newLeaderID := int(info.LeaderID - 1)
@@ -223,7 +223,7 @@ func (cm *ClusterManager) LeaderUpdated(info raftio.LeaderInfo) {
 			// All clusters must be configured in the config file
 			log.Errorf("unknown cluster id %d", clusterID)
 		}
-		ccm := o.(*clientClusterManager)
+		ccm := o.(*clientClusterManager) //nolint:forcetypeassert
 		if err := ccm.setLeader(newLeaderID, info.Term); err != nil {
 			log.Errorf("failed to set leader %v", err)
 		}
@@ -242,20 +242,19 @@ func (cm *ClusterManager) newClientClusterManager(clusterID uint64) (*clientClus
 	}, nil
 }
 
-
 type clientClusterManager struct {
-	cm *ClusterManager
-	cs *client.Session
-	lock sync.Mutex
-	clusterID uint64
-	tickTimer *time.Timer
+	cm         *ClusterManager
+	cs         *client.Session
+	lock       sync.Mutex
+	clusterID  uint64
+	tickTimer  *time.Timer
 	tickerLock sync.Mutex
 }
 
 func (c *clientClusterManager) nodeStarted(clusterName string, clusterID uint64, nodeID int, numNodes int, numGroups int,
 	replicationFactor int, windowSizeTicks int, minTicksInWindow int) (bool, error) {
 	if c.clusterID != clusterID {
-		return false, errors.Errorf("attempt to register cluster %cm with different cluster id %d", clusterName, clusterID)
+		return false, errors.Errorf("attempt to register cluster %s with different cluster id %d", clusterName, clusterID)
 	}
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -305,7 +304,7 @@ func (c *clientClusterManager) getClusterState(clusterName string, nodeID int, v
 	}
 	// TODO handle error return from SM
 	state := &ClusterState{}
-	state.deserialize(res.Data)
+	state.deserialize(res.Data, 0)
 	return state, nil
 }
 
@@ -321,7 +320,7 @@ func (c *clientClusterManager) setLeader(nodeID int, term uint64) error {
 	defer c.lock.Unlock()
 	command := &setLeaderCommand{
 		leaderID: nodeID,
-		term: term,
+		term:     term,
 	}
 	bytes := command.serialize()
 	_, err := c.cm.nodeHost.SyncPropose(context.Background(), c.cs, bytes)
@@ -363,12 +362,12 @@ func (c *clientClusterManager) stopTicker() {
 }
 
 type nodeStartedCommand struct {
-	nodeID int
-	numNodes int
-	numGroups int
+	nodeID            int
+	numNodes          int
+	numGroups         int
 	replicationFactor int
-	windowSizeTicks int
-	minTicksInWindow int
+	windowSizeTicks   int
+	minTicksInWindow  int
 }
 
 func (n *nodeStartedCommand) serialize() []byte {
@@ -400,7 +399,7 @@ func (n *nodeStartedCommand) deserialize(bytes []byte) {
 	windowSizeTicks, offset = common.ReadUint32FromBufferLE(bytes, offset)
 	n.windowSizeTicks = int(windowSizeTicks)
 	var minTicksInWindow uint32
-	minTicksInWindow, offset = common.ReadUint32FromBufferLE(bytes, offset)
+	minTicksInWindow, _ = common.ReadUint32FromBufferLE(bytes, offset)
 	n.minTicksInWindow = int(minTicksInWindow)
 }
 
@@ -421,8 +420,8 @@ func (n *nodeStoppedCommand) deserialize(bytes []byte) {
 
 type getClusterStateCommand struct {
 	clusterName string
-	nodeID int
-	version uint64
+	nodeID      int
+	version     uint64
 }
 
 func (g *getClusterStateCommand) serialize() []byte {
@@ -441,12 +440,12 @@ func (g *getClusterStateCommand) deserialize(bytes []byte) {
 	var nodeID uint32
 	nodeID, offset = common.ReadUint32FromBufferLE(bytes, offset)
 	g.nodeID = int(nodeID)
-	g.version, offset = common.ReadUint64FromBufferLE(bytes, offset)
+	g.version, _ = common.ReadUint64FromBufferLE(bytes, offset)
 }
 
 type setLeaderCommand struct {
 	leaderID int
-	term uint64
+	term     uint64
 }
 
 func (s *setLeaderCommand) serialize() []byte {
@@ -458,8 +457,7 @@ func (s *setLeaderCommand) serialize() []byte {
 
 func (s *setLeaderCommand) deserialize(bytes []byte) {
 	lid, offset := common.ReadUint32FromBufferLE(bytes, 0)
-	term, offset := common.ReadUint64FromBufferLE(bytes, offset)
+	term, _ := common.ReadUint64FromBufferLE(bytes, offset)
 	s.leaderID = int(lid)
 	s.term = term
 }
-

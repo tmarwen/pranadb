@@ -33,21 +33,26 @@ type GroupState struct {
 	NodeIDs []int // The first one is the leader
 }
 
-type clusterInfo struct {
-	first bool
-	version                uint64
-	numNodes               int
-	numGroups              int
-	replicationFactor      int
-	windowClockTicks       int32
+// Describes the state of the cluster - we keep this separate from the Raft state machine to make it easier to test
+type clusterStateMachineState struct {
+	clusterName       string
+	thisNodeID        int
+	leaderID          int
+	term              uint64
+	first             bool
+	version           uint64
+	numNodes          int
+	numGroups         int
+	replicationFactor int
+	windowClockTicks  int32
 	windowSizeTicks   int
 	minChecksInWindow int
-	activeNodes            map[int]struct{}
-	pingsInWindow          map[int]int
+	activeNodes       map[int]struct{}
+	pingsInWindow     map[int]int
 	latestState       *ClusterState
 }
 
-func (ci *clusterInfo) NodeStarted(nodeID int, numNodes int, numGroups int, replicationFactor int,
+func (ci *clusterStateMachineState) NodeStarted(nodeID int, numNodes int, numGroups int, replicationFactor int,
 	windowSizeInTicks int, minChecksInWindow int) (bool, error) {
 	if ci.first {
 		// The first node to call in sets the params
@@ -76,7 +81,7 @@ func (ci *clusterInfo) NodeStarted(nodeID int, numNodes int, numGroups int, repl
 	return true, nil
 }
 
-func (ci *clusterInfo) NodeStopped(nodeID int) error {
+func (ci *clusterStateMachineState) NodeStopped(nodeID int) error {
 	if ci.first {
 		return nil
 	}
@@ -86,7 +91,7 @@ func (ci *clusterInfo) NodeStopped(nodeID int) error {
 	return nil
 }
 
-func (ci *clusterInfo) ClockTick() error {
+func (ci *clusterStateMachineState) ClockTick() error {
 	ticks := atomic.AddInt32(&ci.windowClockTicks, 1)
 	if int(ticks) < ci.windowSizeTicks {
 		return nil
@@ -118,7 +123,7 @@ func (ci *clusterInfo) ClockTick() error {
 	return nil
 }
 
-func (ci *clusterInfo) GetClusterState(clusterName string, nodeID int, version uint64) (*ClusterState, error) {
+func (ci *clusterStateMachineState) GetClusterState(clusterName string, nodeID int, version uint64) (*ClusterState, error) {
 	// Increment the window ping count
 	cnt, ok := ci.pingsInWindow[nodeID]
 	if ok {
@@ -133,7 +138,7 @@ func (ci *clusterInfo) GetClusterState(clusterName string, nodeID int, version u
 	return nil, nil // version hasn't changed
 }
 
-func (ci *clusterInfo) calculateClusterState() {
+func (ci *clusterStateMachineState) calculateClusterState() {
 	numNodes := len(ci.activeNodes)
 	if numNodes < ci.replicationFactor {
 		// Not enough nodes in the cluster to satisfy replication factor
@@ -141,11 +146,11 @@ func (ci *clusterInfo) calculateClusterState() {
 		return
 	}
 	activeNodes := make([]int, 0, len(ci.activeNodes))
-	for nid, _ := range ci.activeNodes {
+	for nid := range ci.activeNodes {
 		activeNodes = append(activeNodes, nid)
 	}
 	groupStates := make([]GroupState, ci.numGroups)
-	// TODO more sophisticated algorithm - we can use consistent hashing to minimise number of group leader changes
+	// TODO more sophisticated algorithm - we should use consistent hashing to minimise number of group leader changes
 	for i := 0; i < ci.numGroups; i++ {
 		groupNodes := make([]int, 0, ci.replicationFactor)
 		for r := 0; r < ci.replicationFactor; r++ {
@@ -162,7 +167,10 @@ func (ci *clusterInfo) calculateClusterState() {
 	ci.version++
 }
 
-func (ci *clusterInfo) serialize(buff []byte) []byte {
+func (ci *clusterStateMachineState) serialize(buff []byte) []byte {
+	buff = common.AppendStringToBufferLE(buff, ci.clusterName)
+	buff = common.AppendUint32ToBufferLE(buff, uint32(ci.leaderID))
+	buff = common.AppendUint64ToBufferLE(buff, ci.term)
 	if ci.first {
 		buff = append(buff, 1)
 	} else {
@@ -176,7 +184,7 @@ func (ci *clusterInfo) serialize(buff []byte) []byte {
 	buff = common.AppendUint32ToBufferLE(buff, uint32(ci.windowSizeTicks))
 	buff = common.AppendUint32ToBufferLE(buff, uint32(ci.minChecksInWindow))
 	buff = common.AppendUint32ToBufferLE(buff, uint32(len(ci.activeNodes)))
-	for nid, _ := range ci.activeNodes {
+	for nid := range ci.activeNodes {
 		buff = common.AppendUint32ToBufferLE(buff, uint32(nid))
 	}
 	buff = common.AppendUint32ToBufferLE(buff, uint32(len(ci.pingsInWindow)))
@@ -193,7 +201,12 @@ func (ci *clusterInfo) serialize(buff []byte) []byte {
 	return buff
 }
 
-func (ci *clusterInfo) deserialize(buff []byte, offset int) int {
+func (ci *clusterStateMachineState) deserialize(buff []byte, offset int) int {
+	ci.clusterName, offset = common.ReadStringFromBufferLE(buff, offset)
+	var leaderID uint32
+	leaderID, offset = common.ReadUint32FromBufferLE(buff, offset)
+	ci.leaderID = int(leaderID)
+	ci.term, offset = common.ReadUint64FromBufferLE(buff, offset)
 	ci.first = buff[offset] == 1
 	offset++
 	ci.version, offset = common.ReadUint64FromBufferLE(buff, offset)
@@ -235,7 +248,7 @@ func (ci *clusterInfo) deserialize(buff []byte, offset int) int {
 }
 
 func (cs *ClusterState) serialize(buff []byte) []byte {
-	buff = common.AppendUint64ToBufferLE(buff, uint64(cs.Version))
+	buff = common.AppendUint64ToBufferLE(buff, cs.Version)
 	buff = common.AppendUint32ToBufferLE(buff, uint32(len(cs.GroupStates)))
 	for _, gs := range cs.GroupStates {
 		buff = common.AppendUint32ToBufferLE(buff, uint32(gs.GroupID))

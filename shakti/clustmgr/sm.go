@@ -8,12 +8,8 @@ import (
 )
 
 type clusterStateMachine struct {
-	cm *ClusterManager
-	ci clusterInfo
-	clusterName string
-	thisNodeID int
-	leaderID int
-	term uint64
+	cm    *ClusterManager
+	state clusterStateMachineState
 }
 
 func (s *clusterStateMachine) Update(bytes []byte) (sm.Result, error) {
@@ -32,10 +28,10 @@ func (s *clusterStateMachine) Update(bytes []byte) (sm.Result, error) {
 	}
 }
 
-func (s *clusterStateMachine) handleNodeStarted(bytes []byte) (sm.Result, error){
+func (s *clusterStateMachine) handleNodeStarted(bytes []byte) (sm.Result, error) {
 	command := &nodeStartedCommand{}
 	command.deserialize(bytes[1:])
-	ok, err := s.ci.NodeStarted(command.nodeID, command.numNodes, command.numGroups, command.replicationFactor,
+	ok, err := s.state.NodeStarted(command.nodeID, command.numNodes, command.numGroups, command.replicationFactor,
 		command.windowSizeTicks, command.minTicksInWindow)
 	if err != nil {
 		// TODO pass back error
@@ -51,10 +47,10 @@ func (s *clusterStateMachine) handleNodeStarted(bytes []byte) (sm.Result, error)
 	}, nil
 }
 
-func (s *clusterStateMachine) handleNodeStopped(bytes []byte) (sm.Result, error){
+func (s *clusterStateMachine) handleNodeStopped(bytes []byte) (sm.Result, error) {
 	command := &nodeStoppedCommand{}
 	command.deserialize(bytes)
-	err := s.ci.NodeStopped(command.nodeID)
+	err := s.state.NodeStopped(command.nodeID)
 	if err != nil {
 		// TODO pass back error
 		log.Errorf("failed to handle register %v", err)
@@ -63,10 +59,10 @@ func (s *clusterStateMachine) handleNodeStopped(bytes []byte) (sm.Result, error)
 	return sm.Result{}, nil
 }
 
-func (s *clusterStateMachine) handleGetState(bytes []byte) (sm.Result, error){
+func (s *clusterStateMachine) handleGetState(bytes []byte) (sm.Result, error) {
 	command := &getClusterStateCommand{}
 	command.deserialize(bytes)
-	state, err := s.ci.GetClusterState(command.clusterName, command.nodeID, command.version)
+	state, err := s.state.GetClusterState(command.clusterName, command.nodeID, command.version)
 	if err != nil {
 		// TODO pass back error
 		log.Errorf("failed to handle getClusterState %v", err)
@@ -77,8 +73,8 @@ func (s *clusterStateMachine) handleGetState(bytes []byte) (sm.Result, error){
 	return sm.Result{Data: buff}, nil
 }
 
-func (s *clusterStateMachine) handleClockTick() (sm.Result, error){
-	if err := s.ci.ClockTick(); err != nil {
+func (s *clusterStateMachine) handleClockTick() (sm.Result, error) {
+	if err := s.state.ClockTick(); err != nil {
 		// TODO pass back error
 		log.Errorf("failed to handle clocktick %v", err)
 		return sm.Result{}, nil
@@ -89,20 +85,20 @@ func (s *clusterStateMachine) handleClockTick() (sm.Result, error){
 func (s *clusterStateMachine) handleSetLeaderCommand(bytes []byte) (sm.Result, error) {
 	command := &setLeaderCommand{}
 	command.deserialize(bytes[1:])
-	if s.term != 0 && s.term != command.term {
+	if s.state.term != 0 && s.state.term != command.term {
 		// Ignore - got a message out of term
 		return sm.Result{}, nil
 	}
-	s.term = command.term
-	if s.leaderID != command.leaderID && s.thisNodeID == command.leaderID {
+	s.state.term = command.term
+	if s.state.leaderID != command.leaderID && s.state.thisNodeID == command.leaderID {
 		// Becoming leader
-		if err := s.cm.startTicker(s.clusterName); err != nil {
+		if err := s.cm.startTicker(s.state.clusterName); err != nil {
 			return sm.Result{}, err
 		}
-	} else if s.leaderID == s.thisNodeID && command.leaderID != s.leaderID {
+	} else if s.state.leaderID == s.state.thisNodeID && command.leaderID != s.state.leaderID {
 		// Was leader, not anymore
-		if err := s.cm.stopTicker(s.clusterName); err != nil {
-			return sm.Result{}, nil
+		if err := s.cm.stopTicker(s.state.clusterName); err != nil {
+			return sm.Result{}, err
 		}
 	}
 	return sm.Result{}, nil
@@ -113,12 +109,8 @@ func (s *clusterStateMachine) Lookup(i interface{}) (interface{}, error) {
 }
 
 func (s *clusterStateMachine) SaveSnapshot(writer io.Writer, collection sm.ISnapshotFileCollection, i <-chan struct{}) error {
-	var bytes []byte
-	bytes = common.AppendStringToBufferLE(bytes, s.clusterName)
-	bytes = common.AppendUint32ToBufferLE(bytes, uint32(s.leaderID))
-	bytes = common.AppendUint64ToBufferLE(bytes, s.term)
-	bytes = s.ci.serialize(bytes)
-	buff := make([]byte, 0, len(bytes) + 4)
+	bytes := s.state.serialize(nil)
+	buff := make([]byte, 0, len(bytes)+4)
 	buff = common.AppendUint32ToBufferLE(buff, uint32(len(bytes)))
 	buff = append(buff, bytes...)
 	_, err := writer.Write(buff)
@@ -137,13 +129,7 @@ func (s *clusterStateMachine) RecoverFromSnapshot(reader io.Reader, files []sm.S
 	if err != nil {
 		return err
 	}
-	offset := 0
-	s.clusterName, offset = common.ReadStringFromBufferLE(bytes, offset)
-	var leaderID uint32
-	leaderID, offset = common.ReadUint32FromBufferLE(bytes, offset)
-	s.leaderID = int(leaderID)
-	s.term, offset = common.ReadUint64FromBufferLE(bytes, offset)
-	s.ci.deserialize(bytes, offset)
+	s.state.deserialize(bytes, 0)
 	return nil
 }
 
