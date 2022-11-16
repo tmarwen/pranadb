@@ -741,6 +741,384 @@ func (x *RemotingTestMessage) GetSomeField() string {
 	return ""
 }
 
+type NodeStartedMessage struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	ClusterName      string `protobuf:"bytes,1,opt,name=cluster_name,json=clusterName,proto3" json:"cluster_name,omitempty"`
+	ClusterId        int64  `protobuf:"varint,2,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	NodeId           int32  `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	NumNodes         int32  `protobuf:"varint,4,opt,name=num_nodes,json=numNodes,proto3" json:"num_nodes,omitempty"`
+	NumGroups        int32  `protobuf:"varint,5,opt,name=num_groups,json=numGroups,proto3" json:"num_groups,omitempty"`
+	MinReplicas      int32  `protobuf:"varint,6,opt,name=min_replicas,json=minReplicas,proto3" json:"min_replicas,omitempty"`
+	MaxReplicas      int32  `protobuf:"varint,7,opt,name=max_replicas,json=maxReplicas,proto3" json:"max_replicas,omitempty"`
+	WindowSizeTicks  int32  `protobuf:"varint,8,opt,name=window_size_ticks,json=windowSizeTicks,proto3" json:"window_size_ticks,omitempty"`
+	MinTicksInWindow int32  `protobuf:"varint,9,opt,name=min_ticks_in_window,json=minTicksInWindow,proto3" json:"min_ticks_in_window,omitempty"`
+}
+
+func (x *NodeStartedMessage) Reset() {
+	*x = NodeStartedMessage{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[13]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *NodeStartedMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeStartedMessage) ProtoMessage() {}
+
+func (x *NodeStartedMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[13]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeStartedMessage.ProtoReflect.Descriptor instead.
+func (*NodeStartedMessage) Descriptor() ([]byte, []int) {
+	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *NodeStartedMessage) GetClusterName() string {
+	if x != nil {
+		return x.ClusterName
+	}
+	return ""
+}
+
+func (x *NodeStartedMessage) GetClusterId() int64 {
+	if x != nil {
+		return x.ClusterId
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetNumNodes() int32 {
+	if x != nil {
+		return x.NumNodes
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetNumGroups() int32 {
+	if x != nil {
+		return x.NumGroups
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetMinReplicas() int32 {
+	if x != nil {
+		return x.MinReplicas
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetMaxReplicas() int32 {
+	if x != nil {
+		return x.MaxReplicas
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetWindowSizeTicks() int32 {
+	if x != nil {
+		return x.WindowSizeTicks
+	}
+	return 0
+}
+
+func (x *NodeStartedMessage) GetMinTicksInWindow() int32 {
+	if x != nil {
+		return x.MinTicksInWindow
+	}
+	return 0
+}
+
+type NodeStoppedMessage struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	ClusterName string `protobuf:"bytes,1,opt,name=cluster_name,json=clusterName,proto3" json:"cluster_name,omitempty"`
+	NodeId      int32  `protobuf:"varint,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+}
+
+func (x *NodeStoppedMessage) Reset() {
+	*x = NodeStoppedMessage{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[14]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *NodeStoppedMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeStoppedMessage) ProtoMessage() {}
+
+func (x *NodeStoppedMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[14]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeStoppedMessage.ProtoReflect.Descriptor instead.
+func (*NodeStoppedMessage) Descriptor() ([]byte, []int) {
+	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *NodeStoppedMessage) GetClusterName() string {
+	if x != nil {
+		return x.ClusterName
+	}
+	return ""
+}
+
+func (x *NodeStoppedMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+type GetClusterStateMessage struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	ClusterName string `protobuf:"bytes,1,opt,name=cluster_name,json=clusterName,proto3" json:"cluster_name,omitempty"`
+	NodeId      int32  `protobuf:"varint,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Version     int64  `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+}
+
+func (x *GetClusterStateMessage) Reset() {
+	*x = GetClusterStateMessage{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[15]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *GetClusterStateMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetClusterStateMessage) ProtoMessage() {}
+
+func (x *GetClusterStateMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[15]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetClusterStateMessage.ProtoReflect.Descriptor instead.
+func (*GetClusterStateMessage) Descriptor() ([]byte, []int) {
+	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetClusterStateMessage) GetClusterName() string {
+	if x != nil {
+		return x.ClusterName
+	}
+	return ""
+}
+
+func (x *GetClusterStateMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *GetClusterStateMessage) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+type GetClusterStateResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Payload []byte `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+}
+
+func (x *GetClusterStateResponse) Reset() {
+	*x = GetClusterStateResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[16]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *GetClusterStateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetClusterStateResponse) ProtoMessage() {}
+
+func (x *GetClusterStateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[16]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetClusterStateResponse.ProtoReflect.Descriptor instead.
+func (*GetClusterStateResponse) Descriptor() ([]byte, []int) {
+	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetClusterStateResponse) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type ClockTickMessage struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	ClusterName string `protobuf:"bytes,1,opt,name=cluster_name,json=clusterName,proto3" json:"cluster_name,omitempty"`
+}
+
+func (x *ClockTickMessage) Reset() {
+	*x = ClockTickMessage{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[17]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ClockTickMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClockTickMessage) ProtoMessage() {}
+
+func (x *ClockTickMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[17]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClockTickMessage.ProtoReflect.Descriptor instead.
+func (*ClockTickMessage) Descriptor() ([]byte, []int) {
+	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ClockTickMessage) GetClusterName() string {
+	if x != nil {
+		return x.ClusterName
+	}
+	return ""
+}
+
+type SetLeaderMessage struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	NodeId int32 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Term   int64 `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty"`
+}
+
+func (x *SetLeaderMessage) Reset() {
+	*x = SetLeaderMessage{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[18]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *SetLeaderMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetLeaderMessage) ProtoMessage() {}
+
+func (x *SetLeaderMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[18]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetLeaderMessage.ProtoReflect.Descriptor instead.
+func (*SetLeaderMessage) Descriptor() ([]byte, []int) {
+	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SetLeaderMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *SetLeaderMessage) GetTerm() int64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
 var File_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto protoreflect.FileDescriptor
 
 var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDesc = []byte{
@@ -825,12 +1203,56 @@ var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDesc = []byte
 	0x64, 0x65, 0x49, 0x64, 0x22, 0x34, 0x0a, 0x13, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x69, 0x6e, 0x67,
 	0x54, 0x65, 0x73, 0x74, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x12, 0x1d, 0x0a, 0x0a, 0x73,
 	0x6f, 0x6d, 0x65, 0x5f, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x09, 0x73, 0x6f, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x42, 0x49, 0x5a, 0x47, 0x67, 0x69,
-	0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x73, 0x71, 0x75, 0x61, 0x72, 0x65, 0x75,
-	0x70, 0x2f, 0x70, 0x72, 0x61, 0x6e, 0x61, 0x64, 0x62, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x73,
-	0x2f, 0x73, 0x71, 0x75, 0x61, 0x72, 0x65, 0x75, 0x70, 0x2f, 0x63, 0x61, 0x73, 0x68, 0x2f, 0x70,
-	0x72, 0x61, 0x6e, 0x61, 0x64, 0x62, 0x2f, 0x76, 0x31, 0x2f, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65,
-	0x72, 0x6d, 0x73, 0x67, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x09, 0x73, 0x6f, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x22, 0xcc, 0x02, 0x0a, 0x12, 0x4e,
+	0x6f, 0x64, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x65, 0x64, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67,
+	0x65, 0x12, 0x21, 0x0a, 0x0c, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x5f, 0x6e, 0x61, 0x6d,
+	0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72,
+	0x4e, 0x61, 0x6d, 0x65, 0x12, 0x1d, 0x0a, 0x0a, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x5f,
+	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x09, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65,
+	0x72, 0x49, 0x64, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x05, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x1b, 0x0a, 0x09,
+	0x6e, 0x75, 0x6d, 0x5f, 0x6e, 0x6f, 0x64, 0x65, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x05, 0x52,
+	0x08, 0x6e, 0x75, 0x6d, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x6e, 0x75, 0x6d,
+	0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x05, 0x52, 0x09, 0x6e,
+	0x75, 0x6d, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x6d, 0x69, 0x6e, 0x5f,
+	0x72, 0x65, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0b,
+	0x6d, 0x69, 0x6e, 0x52, 0x65, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x6d,
+	0x61, 0x78, 0x5f, 0x72, 0x65, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x73, 0x18, 0x07, 0x20, 0x01, 0x28,
+	0x05, 0x52, 0x0b, 0x6d, 0x61, 0x78, 0x52, 0x65, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x73, 0x12, 0x2a,
+	0x0a, 0x11, 0x77, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x5f, 0x73, 0x69, 0x7a, 0x65, 0x5f, 0x74, 0x69,
+	0x63, 0x6b, 0x73, 0x18, 0x08, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0f, 0x77, 0x69, 0x6e, 0x64, 0x6f,
+	0x77, 0x53, 0x69, 0x7a, 0x65, 0x54, 0x69, 0x63, 0x6b, 0x73, 0x12, 0x2d, 0x0a, 0x13, 0x6d, 0x69,
+	0x6e, 0x5f, 0x74, 0x69, 0x63, 0x6b, 0x73, 0x5f, 0x69, 0x6e, 0x5f, 0x77, 0x69, 0x6e, 0x64, 0x6f,
+	0x77, 0x18, 0x09, 0x20, 0x01, 0x28, 0x05, 0x52, 0x10, 0x6d, 0x69, 0x6e, 0x54, 0x69, 0x63, 0x6b,
+	0x73, 0x49, 0x6e, 0x57, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x22, 0x50, 0x0a, 0x12, 0x4e, 0x6f, 0x64,
+	0x65, 0x53, 0x74, 0x6f, 0x70, 0x70, 0x65, 0x64, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x12,
+	0x21, 0x0a, 0x0c, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x4e, 0x61,
+	0x6d, 0x65, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x05, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x22, 0x6e, 0x0a, 0x16, 0x47,
+	0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x53, 0x74, 0x61, 0x74, 0x65, 0x4d, 0x65,
+	0x73, 0x73, 0x61, 0x67, 0x65, 0x12, 0x21, 0x0a, 0x0c, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72,
+	0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x63, 0x6c, 0x75,
+	0x73, 0x74, 0x65, 0x72, 0x4e, 0x61, 0x6d, 0x65, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65,
+	0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49,
+	0x64, 0x12, 0x18, 0x0a, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x22, 0x33, 0x0a, 0x17, 0x47,
+	0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x53, 0x74, 0x61, 0x74, 0x65, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61,
+	0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x07, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64,
+	0x22, 0x35, 0x0a, 0x10, 0x43, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x63, 0x6b, 0x4d, 0x65, 0x73,
+	0x73, 0x61, 0x67, 0x65, 0x12, 0x21, 0x0a, 0x0c, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x5f,
+	0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x63, 0x6c, 0x75, 0x73,
+	0x74, 0x65, 0x72, 0x4e, 0x61, 0x6d, 0x65, 0x22, 0x3f, 0x0a, 0x10, 0x53, 0x65, 0x74, 0x4c, 0x65,
+	0x61, 0x64, 0x65, 0x72, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x12, 0x17, 0x0a, 0x07, 0x6e,
+	0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x05, 0x52, 0x06, 0x6e, 0x6f,
+	0x64, 0x65, 0x49, 0x64, 0x12, 0x12, 0x0a, 0x04, 0x74, 0x65, 0x72, 0x6d, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x04, 0x74, 0x65, 0x72, 0x6d, 0x42, 0x49, 0x5a, 0x47, 0x67, 0x69, 0x74, 0x68,
+	0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x73, 0x71, 0x75, 0x61, 0x72, 0x65, 0x75, 0x70, 0x2f,
+	0x70, 0x72, 0x61, 0x6e, 0x61, 0x64, 0x62, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x73, 0x2f, 0x73,
+	0x71, 0x75, 0x61, 0x72, 0x65, 0x75, 0x70, 0x2f, 0x63, 0x61, 0x73, 0x68, 0x2f, 0x70, 0x72, 0x61,
+	0x6e, 0x61, 0x64, 0x62, 0x2f, 0x76, 0x31, 0x2f, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x6d,
+	0x73, 0x67, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -845,7 +1267,7 @@ func file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescGZIP() [
 	return file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDescData
 }
 
-var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_goTypes = []interface{}{
 	(*DDLStatementInfo)(nil),            // 0: squareup.cash.pranadb.clustermsgs.v1.DDLStatementInfo
 	(*DDLCancelMessage)(nil),            // 1: squareup.cash.pranadb.clustermsgs.v1.DDLCancelMessage
@@ -860,6 +1282,12 @@ var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_goTypes = []inte
 	(*LeaderInfosMessage)(nil),          // 10: squareup.cash.pranadb.clustermsgs.v1.LeaderInfosMessage
 	(*LeaderInfo)(nil),                  // 11: squareup.cash.pranadb.clustermsgs.v1.LeaderInfo
 	(*RemotingTestMessage)(nil),         // 12: squareup.cash.pranadb.clustermsgs.v1.RemotingTestMessage
+	(*NodeStartedMessage)(nil),          // 13: squareup.cash.pranadb.clustermsgs.v1.NodeStartedMessage
+	(*NodeStoppedMessage)(nil),          // 14: squareup.cash.pranadb.clustermsgs.v1.NodeStoppedMessage
+	(*GetClusterStateMessage)(nil),      // 15: squareup.cash.pranadb.clustermsgs.v1.GetClusterStateMessage
+	(*GetClusterStateResponse)(nil),     // 16: squareup.cash.pranadb.clustermsgs.v1.GetClusterStateResponse
+	(*ClockTickMessage)(nil),            // 17: squareup.cash.pranadb.clustermsgs.v1.ClockTickMessage
+	(*SetLeaderMessage)(nil),            // 18: squareup.cash.pranadb.clustermsgs.v1.SetLeaderMessage
 }
 var file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_depIdxs = []int32{
 	11, // 0: squareup.cash.pranadb.clustermsgs.v1.LeaderInfosMessage.leader_infos:type_name -> squareup.cash.pranadb.clustermsgs.v1.LeaderInfo
@@ -1032,6 +1460,78 @@ func file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_init() {
 				return nil
 			}
 		}
+		file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[13].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*NodeStartedMessage); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[14].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*NodeStoppedMessage); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[15].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*GetClusterStateMessage); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[16].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*GetClusterStateResponse); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[17].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ClockTickMessage); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_msgTypes[18].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*SetLeaderMessage); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1039,7 +1539,7 @@ func file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_squareup_cash_pranadb_clustermsgs_v1_clustermsgs_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

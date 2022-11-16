@@ -73,7 +73,6 @@ func (c *Client) SendRPC(request ClusterMessage, serverAddress string) (ClusterM
 		// where we could have more than one connection to the same server at same time
 		return nil, err
 	}
-
 	return rh.waitForResponse()
 }
 

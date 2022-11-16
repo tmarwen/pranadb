@@ -6,9 +6,9 @@ import (
 	"github.com/squareup/pranadb/common"
 	"github.com/squareup/pranadb/shakti/cloudstore"
 	"github.com/squareup/pranadb/shakti/cmn"
+	"github.com/squareup/pranadb/shakti/datacontroller"
 	"github.com/squareup/pranadb/shakti/iteration"
 	"github.com/squareup/pranadb/shakti/mem"
-	"github.com/squareup/pranadb/shakti/nexus"
 	"github.com/squareup/pranadb/shakti/sst"
 	"sync"
 	"sync/atomic"
@@ -22,7 +22,7 @@ type Shakti struct {
 	conf          cmn.Conf
 	memtable      *mem.Memtable
 	cloudStore    cloudstore.Store
-	controller    nexus.Controller
+	controller    datacontroller.Controller
 	TableCache    *sst.Cache
 	mtLock        sync.RWMutex
 	mtFlushChan   chan struct{}
@@ -36,7 +36,7 @@ type Shakti struct {
 	mtMaxReplaceTime uint64
 }
 
-func NewShakti(id int64, store cloudstore.Store, registry nexus.Controller, conf cmn.Conf) *Shakti {
+func NewShakti(id int64, store cloudstore.Store, registry datacontroller.Controller, conf cmn.Conf) *Shakti {
 	memtable := mem.NewMemtable(conf.MemtableMaxSizeBytes)
 	return &Shakti{
 		id:               id,
@@ -299,8 +299,8 @@ func (s *Shakti) mtFlushRunLoop() {
 				break
 			}
 			log.Debugf("registering sstable %v with controller", tabInfo.ssTableID)
-			if err := s.controller.ApplyChanges(nexus.RegistrationBatch{
-				Registrations: []nexus.RegistrationEntry{{
+			if err := s.controller.ApplyChanges(datacontroller.RegistrationBatch{
+				Registrations: []datacontroller.RegistrationEntry{{
 					Level:    0,
 					TableID:  tabInfo.ssTableID,
 					KeyStart: tabInfo.smallestKey,

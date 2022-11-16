@@ -1,6 +1,5 @@
 
-í
-
+«
 6squareup/cash/pranadb/clustermsgs/v1/clustermsgs.proto$squareup.cash.pranadb.clustermsgs.v1"•
 DDLStatementInfo.
 originating_node_id (RoriginatingNodeId
@@ -50,4 +49,30 @@ LeaderInfo
 node_id (RnodeId"4
 RemotingTestMessage
 
-some_field (	R	someFieldBIZGgithub.com/squareup/pranadb/protos/squareup/cash/pranadb/v1/clustermsgsbproto3
+some_field (	R	someField"Ì
+NodeStartedMessage!
+cluster_name (	RclusterName
+
+cluster_id (R	clusterId
+node_id (RnodeId
+	num_nodes (RnumNodes
+
+num_groups (R	numGroups!
+min_replicas (RminReplicas!
+max_replicas (RmaxReplicas*
+window_size_ticks (RwindowSizeTicks-
+min_ticks_in_window	 (RminTicksInWindow"P
+NodeStoppedMessage!
+cluster_name (	RclusterName
+node_id (RnodeId"n
+GetClusterStateMessage!
+cluster_name (	RclusterName
+node_id (RnodeId
+version (Rversion"3
+GetClusterStateResponse
+payload (Rpayload"5
+ClockTickMessage!
+cluster_name (	RclusterName"?
+SetLeaderMessage
+node_id (RnodeId
+term (RtermBIZGgithub.com/squareup/pranadb/protos/squareup/cash/pranadb/v1/clustermsgsbproto3

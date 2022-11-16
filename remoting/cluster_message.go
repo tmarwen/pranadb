@@ -26,6 +26,11 @@ const (
 	ClusterMessageSourceSetMaxRate
 	ClusterMessageLeaderInfos
 	ClusterMessageRemotingTestMessage
+
+	ClusterMessageClusterControllerNodeStartedMessage
+	ClusterMessageClusterControllerNodeStoppedMessage
+	ClusterMessageClusterControllerGetClusterStateMessage
+	ClusterMessageClusterControllerGetClusterStateResponse
 )
 
 func TypeForClusterMessage(clusterMessage ClusterMessage) ClusterMessageType {
@@ -54,6 +59,14 @@ func TypeForClusterMessage(clusterMessage ClusterMessage) ClusterMessageType {
 		return ClusterMessageLeaderInfos
 	case *clustermsgs.RemotingTestMessage:
 		return ClusterMessageRemotingTestMessage
+	case *clustermsgs.NodeStartedMessage:
+		return ClusterMessageClusterControllerNodeStartedMessage
+	case *clustermsgs.NodeStoppedMessage:
+		return ClusterMessageClusterControllerNodeStoppedMessage
+	case *clustermsgs.GetClusterStateMessage:
+		return ClusterMessageClusterControllerGetClusterStateMessage
+	case *clustermsgs.GetClusterStateResponse:
+		return ClusterMessageClusterControllerGetClusterStateResponse
 	default:
 		return ClusterMessageTypeUnknown
 	}
@@ -101,6 +114,14 @@ func DeserializeClusterMessage(data []byte) (ClusterMessage, error) {
 		msg = &clustermsgs.LeaderInfosMessage{}
 	case ClusterMessageRemotingTestMessage:
 		msg = &clustermsgs.RemotingTestMessage{}
+	case ClusterMessageClusterControllerNodeStartedMessage:
+		msg = &clustermsgs.NodeStartedMessage{}
+	case ClusterMessageClusterControllerNodeStoppedMessage:
+		msg = &clustermsgs.NodeStoppedMessage{}
+	case ClusterMessageClusterControllerGetClusterStateMessage:
+		msg = &clustermsgs.GetClusterStateMessage{}
+	case ClusterMessageClusterControllerGetClusterStateResponse:
+		msg = &clustermsgs.GetClusterStateResponse{}
 	default:
 		return nil, errors.Errorf("invalid notification type %d", nt)
 	}
@@ -255,6 +276,7 @@ func readMessage(handler messageHandler, conn net.Conn, closeAction func()) {
 					return
 				}
 				// We copy the slice otherwise the backing array won't be gc'd
+				// TODO is this really the case? Should be gc'd when the slice is resized
 				msgBuf = common.CopyByteSlice(msgBuf[messageHeaderSize+msgLen:])
 				msgLen = -1
 			} else {

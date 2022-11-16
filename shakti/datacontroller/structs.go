@@ -1,4 +1,4 @@
-package nexus
+package datacontroller
 
 import (
 	"github.com/squareup/pranadb/common"

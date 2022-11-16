@@ -238,13 +238,13 @@ func (c *Config) Validate() error { //nolint:gocyclo
 			return errors.NewInvalidConfigurationError("DataSnapshotEntries must be >= DataCompactionOverhead")
 		}
 		if c.SequenceSnapshotEntries < 10 {
-			return errors.NewInvalidConfigurationError("SequenceSnapshotEntries must be >= 10")
+			return errors.NewInvalidConfigurationError("RaftSnapshotEntries must be >= 10")
 		}
 		if c.SequenceCompactionOverhead < 5 {
 			return errors.NewInvalidConfigurationError("SequenceCompactionOverhead must be >= 5")
 		}
 		if c.SequenceCompactionOverhead > c.SequenceSnapshotEntries {
-			return errors.NewInvalidConfigurationError("SequenceSnapshotEntries must be >= SequenceCompactionOverhead")
+			return errors.NewInvalidConfigurationError("RaftSnapshotEntries must be >= SequenceCompactionOverhead")
 		}
 		if c.LocksSnapshotEntries < 10 {
 			return errors.NewInvalidConfigurationError("LocksSnapshotEntries must be >= 10")

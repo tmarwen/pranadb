@@ -1,15 +1,24 @@
-package clustmgr
+package clustcontroller
 
 import (
+	"fmt"
+	"github.com/golang/protobuf/proto"
 	sm "github.com/lni/dragonboat/v3/statemachine"
 	log "github.com/sirupsen/logrus"
 	"github.com/squareup/pranadb/common"
+	"github.com/squareup/pranadb/protos/squareup/cash/pranadb/v1/clustermsgs"
 	"io"
 )
 
 type clusterStateMachine struct {
-	cm    *ClusterManager
+	cm    *ClusterController
 	state clusterStateMachineState
+}
+
+func newClusterStateMachine(cm *ClusterController) *clusterStateMachine {
+	csm := &clusterStateMachine{cm: cm}
+	csm.state.first = true
+	return csm
 }
 
 func (s *clusterStateMachine) Update(bytes []byte) (sm.Result, error) {
@@ -23,86 +32,95 @@ func (s *clusterStateMachine) Update(bytes []byte) (sm.Result, error) {
 		return s.handleGetState(bytes)
 	case clockTickCommandID:
 		return s.handleClockTick()
+	case setLeaderCommandID:
+		return s.handleSetLeaderCommand(bytes)
 	default:
-		panic("unexpected command type")
+		panic(fmt.Sprintf("unexpected command type %d", commandType))
 	}
 }
 
 func (s *clusterStateMachine) handleNodeStarted(bytes []byte) (sm.Result, error) {
-	command := &nodeStartedCommand{}
-	command.deserialize(bytes[1:])
-	ok, err := s.state.NodeStarted(command.nodeID, command.numNodes, command.numGroups, command.replicationFactor,
-		command.windowSizeTicks, command.minTicksInWindow)
+	b := proto.NewBuffer(bytes[1:])
+	message := &clustermsgs.NodeStartedMessage{}
+	if err := b.Unmarshal(message); err != nil {
+		return sm.Result{}, err
+	}
+	err := s.state.NodeStarted(int(message.NodeId), int(message.NumNodes), int(message.NumGroups), int(message.MinReplicas),
+		int(message.MaxReplicas), int(message.WindowSizeTicks), int(message.MinTicksInWindow))
 	if err != nil {
-		// TODO pass back error
-		log.Errorf("failed to handle register %v", err)
-		return sm.Result{}, nil
+		return errorResult(err), nil
 	}
-	v := 0
-	if ok {
-		v = 1
-	}
-	return sm.Result{
-		Value: uint64(v),
-	}, nil
+	return nilResult, nil
 }
 
 func (s *clusterStateMachine) handleNodeStopped(bytes []byte) (sm.Result, error) {
-	command := &nodeStoppedCommand{}
-	command.deserialize(bytes)
-	err := s.state.NodeStopped(command.nodeID)
-	if err != nil {
-		// TODO pass back error
-		log.Errorf("failed to handle register %v", err)
-		return sm.Result{}, nil
+	b := proto.NewBuffer(bytes[1:])
+	message := &clustermsgs.NodeStoppedMessage{}
+	if err := b.Unmarshal(message); err != nil {
+		return sm.Result{}, err
 	}
-	return sm.Result{}, nil
+	err := s.state.NodeStopped(int(message.NodeId))
+	if err != nil {
+		return errorResult(err), nil
+	}
+	return nilResult, nil
 }
 
 func (s *clusterStateMachine) handleGetState(bytes []byte) (sm.Result, error) {
-	command := &getClusterStateCommand{}
-	command.deserialize(bytes)
-	state, err := s.state.GetClusterState(command.clusterName, command.nodeID, command.version)
-	if err != nil {
-		// TODO pass back error
-		log.Errorf("failed to handle getClusterState %v", err)
-		return sm.Result{}, nil
+	b := proto.NewBuffer(bytes[1:])
+	message := &clustermsgs.GetClusterStateMessage{}
+	if err := b.Unmarshal(message); err != nil {
+		return sm.Result{}, err
 	}
-	var buff []byte
-	buff = state.serialize(buff)
+	state, err := s.state.GetClusterState(int(message.NodeId), uint64(message.Version))
+	if err != nil {
+		return errorResult(err), nil
+	}
+	buff := []byte{1}
+	if state != nil {
+		buff = state.serialize(buff)
+	}
 	return sm.Result{Data: buff}, nil
 }
 
 func (s *clusterStateMachine) handleClockTick() (sm.Result, error) {
 	if err := s.state.ClockTick(); err != nil {
-		// TODO pass back error
-		log.Errorf("failed to handle clocktick %v", err)
-		return sm.Result{}, nil
+		return errorResult(err), nil
 	}
-	return sm.Result{}, nil
+	return nilResult, nil
 }
 
 func (s *clusterStateMachine) handleSetLeaderCommand(bytes []byte) (sm.Result, error) {
 	command := &setLeaderCommand{}
 	command.deserialize(bytes[1:])
-	if s.state.term != 0 && s.state.term != command.term {
+	if s.state.term != 0 && command.term <= s.state.term {
 		// Ignore - got a message out of term
-		return sm.Result{}, nil
+		log.Debug("ignoring out of term")
+		return nilResult, nil
 	}
+	var err error
 	s.state.term = command.term
+	log.Debugf("In handleSetLeaderCommand in node %d new leader is %d term is %d", s.state.thisNodeID, command.leaderID, command.term)
 	if s.state.leaderID != command.leaderID && s.state.thisNodeID == command.leaderID {
 		// Becoming leader
-		if err := s.cm.startTicker(s.state.clusterName); err != nil {
-			return sm.Result{}, err
-		}
+		err = s.cm.becomeLeader(s.state.clusterName, true)
 	} else if s.state.leaderID == s.state.thisNodeID && command.leaderID != s.state.leaderID {
 		// Was leader, not anymore
-		if err := s.cm.stopTicker(s.state.clusterName); err != nil {
-			return sm.Result{}, err
-		}
+		err = s.cm.becomeLeader(s.state.clusterName, false)
 	}
-	return sm.Result{}, nil
+	if err != nil {
+		return errorResult(err), nil
+	}
+	return nilResult, nil
 }
+
+func errorResult(err error) sm.Result {
+	buff := []byte{0}
+	buff = common.AppendStringToBufferLE(buff, err.Error())
+	return sm.Result{Data: buff}
+}
+
+var nilResult = sm.Result{Data: []byte{1}}
 
 func (s *clusterStateMachine) Lookup(i interface{}) (interface{}, error) {
 	return nil, nil

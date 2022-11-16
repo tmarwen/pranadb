@@ -6,9 +6,9 @@ import (
 	"github.com/squareup/pranadb/common/commontest"
 	"github.com/squareup/pranadb/shakti/cloudstore"
 	"github.com/squareup/pranadb/shakti/cmn"
+	"github.com/squareup/pranadb/shakti/datacontroller"
 	"github.com/squareup/pranadb/shakti/iteration"
 	"github.com/squareup/pranadb/shakti/mem"
-	"github.com/squareup/pranadb/shakti/nexus"
 	"github.com/stretchr/testify/require"
 	"math/rand"
 	"testing"
@@ -337,7 +337,7 @@ func setupShakti(t *testing.T) *Shakti {
 
 func setupShaktiWithConf(t *testing.T, conf cmn.Conf) *Shakti {
 	t.Helper()
-	controllerConf := nexus.Conf{
+	controllerConf := datacontroller.Conf{
 		RegistryFormat:                 cmn.MetadataFormatV1,
 		MasterRegistryRecordID:         "test.master",
 		MaxRegistrySegmentTableEntries: 100,
@@ -345,7 +345,7 @@ func setupShaktiWithConf(t *testing.T, conf cmn.Conf) *Shakti {
 	}
 	cloudStore := cloudstore.NewLocalStore(100 * time.Millisecond)
 	replicator := &cmn.NoopReplicator{}
-	controller := nexus.NewController(controllerConf, cloudStore, replicator)
+	controller := datacontroller.NewController(controllerConf, cloudStore, replicator)
 	err := controller.Start()
 	require.NoError(t, err)
 	shakti := NewShakti(1, cloudStore, controller, conf)

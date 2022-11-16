@@ -69,3 +69,41 @@ message LeaderInfo {
 message RemotingTestMessage {
   string some_field = 1;
 }
+
+// Cluster Manager messages
+
+message NodeStartedMessage {
+  string cluster_name = 1;
+  int64 cluster_id = 2;
+  int32 node_id = 3;
+  int32 num_nodes = 4;
+  int32 num_groups = 5;
+  int32 min_replicas = 6;
+  int32 max_replicas = 7;
+  int32 window_size_ticks = 8;
+  int32 min_ticks_in_window = 9;
+}
+
+message NodeStoppedMessage {
+  string cluster_name = 1;
+  int32 node_id = 2;
+}
+
+message GetClusterStateMessage {
+  string cluster_name = 1;
+  int32 node_id = 2;
+  int64 version = 3;
+}
+
+message GetClusterStateResponse {
+  bytes payload = 1;
+}
+
+message ClockTickMessage {
+  string cluster_name = 1;
+}
+
+message SetLeaderMessage {
+  int32 node_id = 1;
+  int64 term = 2;
+}
